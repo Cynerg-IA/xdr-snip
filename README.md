@@ -123,6 +123,11 @@ Single Rust binary using the `windows` crate for Win32/GDI and WinRT APIs:
 
 ## Release History
 
+### v0.4.3 — Settings layout + 1080p size estimates (2026-02-27)
+
+- **Tight layout** — eliminated gaps between standard and advanced controls; TIFF/EXR controls reposition to top when no standard controls above
+- **1080p size estimate** — every format shows estimated file size for a 1920x1080 screenshot, updating in real-time as settings change
+
 ### v0.4.2 — Fix combo box rendering (2026-02-27)
 
 - **Fix dropdown rendering** — combo boxes now render as proper popup dropdowns instead of inline lists (CBS_DROPDOWNLIST must be set at creation time, not after)

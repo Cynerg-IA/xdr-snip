@@ -6,15 +6,16 @@
 [![Release](https://img.shields.io/github/v/release/db-cynerg-ia/xdr-snip)](https://github.com/db-cynerg-ia/xdr-snip/releases)
 
 <p align="center">
-  <img src="assets/social-preview.png" alt="XDR Snip" width="720">
+  <img src="assets/social-preview.png" alt="XDR Snip — HDR screenshot tool for Windows 11" width="720">
 </p>
 
-Lightweight screenshot tool for Windows 11. Select a region on a frozen screen, save in your format of choice — ready to paste into Claude, browsers, or any app.
+Lightweight HDR-aware screenshot tool for Windows 11. Frozen screen overlay, region select, 8 output formats (JPEG, PNG, WebP, AVIF, TIFF, BMP, QOI, OpenEXR), HDR tone mapping — single portable exe, no installer. A fast, open-source alternative to Windows Snipping Tool with HDR support and format control.
 
-## Why
+## Why XDR Snip?
 
-- **Windows clipboard sends uncompressed bitmaps** — a 1080p screenshot becomes 6MB+ when pasted, crashing Claude Code conversations
-- **XDR Snip compresses intelligently** — captures from a frozen screen overlay, encodes to your chosen format (JPEG, PNG, WebP, AVIF, TIFF, BMP, QOI, or OpenEXR)
+- **Windows Snipping Tool can't handle HDR** — HDR screenshots get washed out or clipped. XDR Snip tone-maps HDR and Wide Color Gamut content correctly
+- **Windows clipboard sends uncompressed bitmaps** — a 1080p screenshot becomes 6MB+ when pasted. XDR Snip compresses to your chosen format before saving
+- **No format control** — Snipping Tool only saves PNG. XDR Snip gives you 8 formats with per-format quality/compression tuning
 - **What you select is what you get** — the output matches exactly what you saw during selection, even if the underlying screen changes
 
 ## Features
@@ -70,7 +71,7 @@ save_dir = "~/Pictures/XDR-Snips"     # Output directory
 filename_pattern = "screenshot_{timestamp}"
 
 [capture.format_options.jpeg]
-quality = 85                          # 50-100 (recommended: 85)
+quality = 85                          # 25-100 (recommended: 85)
 chroma_subsampling = "4:2:2"          # "4:4:4", "4:2:2", "4:2:0"
 
 [capture.format_options.png]
@@ -79,11 +80,11 @@ filter = "adaptive"                   # adaptive, none, sub, up, average, paeth
 
 [capture.format_options.webp]
 lossless = false
-quality = 80.0                        # 0-100 (lossy only)
+quality = 80.0                        # 25-100 (lossy only)
 
 [capture.format_options.avif]
-quality = 80                          # 1-100
-speed = 4                             # 1 (slowest/best) to 10 (fastest)
+quality = 80                          # 50-100
+speed = 6                             # 4 (slow/best) to 10 (fastest). Recommended: 6
 
 [hotkey]
 key = "PrintScreen"                   # Trigger key
@@ -183,6 +184,33 @@ Single Rust binary using the `windows` crate for Win32/GDI and WinRT APIs:
 - HDR capture via Windows.Graphics.Capture + Extended Reinhard tone mapping
 - JPEG output + clipboard
 - C# capture subprocess (later removed in v0.2.0)
+
+## XDR Snip vs Windows Snipping Tool
+
+| Feature | XDR Snip | Windows Snipping Tool |
+|---------|----------|----------------------|
+| HDR capture + tone mapping | Yes (Extended Reinhard) | No (washed out) |
+| Wide Color Gamut (P3/DCI) | Yes (max-channel Reinhard) | No (clipped) |
+| Output formats | 8 (JPEG, PNG, WebP, AVIF, TIFF, BMP, QOI, OpenEXR) | PNG only |
+| Quality/compression control | Per-format sliders | None |
+| OpenEXR HDR preservation | Yes (raw f16 data) | No |
+| Frozen screen overlay | Yes (GDI BitBlt) | Yes |
+| Region select | Yes | Yes |
+| Portable (no install) | Yes (single exe) | Bundled with Windows |
+| Open source | MIT | No |
+
+## Use Cases
+
+- **AI workflows** — paste compressed screenshots into Claude, ChatGPT, or Gemini without hitting upload limits
+- **HDR content creation** — capture HDR screenshots from games, video editing, or color-graded content without losing dynamic range
+- **Web development** — save screenshots in WebP or AVIF for optimal web performance testing
+- **Documentation** — capture UI screenshots in high-quality PNG with tunable compression
+- **Color-accurate work** — preserve Wide Color Gamut (P3/DCI) content instead of clipping to sRGB
+- **Archival** — OpenEXR output preserves raw HDR f16 pixel data for future processing
+
+## Keywords
+
+`windows screenshot tool` `hdr screenshot` `screen capture windows 11` `snipping tool alternative` `screenshot to webp` `screenshot to avif` `hdr tone mapping` `wide color gamut capture` `frozen screen overlay` `region select screenshot` `portable screenshot tool` `rust screenshot` `openexr screenshot` `print screen replacement`
 
 ## License
 

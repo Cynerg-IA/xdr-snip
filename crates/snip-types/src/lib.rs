@@ -38,7 +38,7 @@ impl Default for Config {
 /// Capture-related settings: JPEG quality, output directory, filename template.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CaptureConfig {
-    /// JPEG quality level (1-100). Higher values produce larger, sharper files.
+    /// JPEG quality level (50-100). Higher values produce larger, sharper files.
     #[serde(default = "default_quality")]
     pub quality: u32,
 

@@ -58,7 +58,7 @@ Config file: `%APPDATA%\xdr-snip\config.toml` (created on first run with default
 
 ```toml
 [capture]
-quality = 85                          # JPEG quality 1-100
+quality = 85                          # JPEG quality 50-100 (recommended: 85)
 save_dir = "~/Pictures/XDR-Snips"     # Output directory
 filename_pattern = "screenshot_{timestamp}"
 

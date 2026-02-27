@@ -59,10 +59,10 @@ pub fn load_config() -> Result<Config, SnipError> {
         ))
     })?;
 
-    // Validate quality range
-    if config.capture.quality == 0 || config.capture.quality > 100 {
+    // Validate quality range (50-100; below 50 = visible artifacts)
+    if config.capture.quality < 50 || config.capture.quality > 100 {
         warn!(
-            "load_config: quality {} out of 1-100 range, clamping",
+            "load_config: quality {} out of 50-100 range, clamping",
             config.capture.quality
         );
     }

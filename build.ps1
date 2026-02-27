@@ -42,10 +42,10 @@ Write-Host "`n--- Building snip-app (Rust) ---" -ForegroundColor Yellow
 
 if ($Release) {
     cargo build --release --manifest-path (Join-Path $PSScriptRoot "Cargo.toml")
-    $rustExe = Join-Path $PSScriptRoot "target\release\snip-app.exe"
+    $rustExe = Join-Path $PSScriptRoot "target\release\hdr-snip.exe"
 } else {
     cargo build --manifest-path (Join-Path $PSScriptRoot "Cargo.toml")
-    $rustExe = Join-Path $PSScriptRoot "target\debug\snip-app.exe"
+    $rustExe = Join-Path $PSScriptRoot "target\debug\hdr-snip.exe"
 }
 
 if ($LASTEXITCODE -ne 0) {

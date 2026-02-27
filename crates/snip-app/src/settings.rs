@@ -136,13 +136,20 @@ const ID_EXR_COMPRESS_COMBO: i32 = 161;
 // --- Size estimate label ---
 const ID_SIZE_ESTIMATE: i32 = 180;
 
+// --- Preset buttons ---
+/// Control ID for the "Reset Recommended" button (resets current format to defaults).
+const ID_RESET_RECOMMENDED: i32 = 181;
+
+/// Control ID for the "Best Preset" button (switches to WebP lossy 85).
+const ID_BEST_COMPROMISE: i32 = 182;
+
 // ======================== LAYOUT CONSTANTS ========================
 
 /// Dialog width in pixels.
 const DLG_W: i32 = 500;
 
 /// Dialog height in pixels (includes title bar + borders).
-const DLG_H: i32 = 440;
+const DLG_H: i32 = 470;
 
 /// Left/right margin for controls.
 const MARGIN: i32 = 20;
@@ -386,6 +393,21 @@ unsafe extern "system" fn settings_wndproc(
                             show_format_options(hwnd, OutputFormat::ALL[idx]);
                         }
                     }
+                }
+
+                ID_RESET_RECOMMENDED => {
+                    debug!("settings_wndproc: Reset Recommended clicked");
+                    if let Ok(combo) = GetDlgItem(Some(hwnd), ID_FORMAT_COMBO) {
+                        let idx = SendMessageW(combo, CB_GETCURSEL, None, None).0 as usize;
+                        if idx < OutputFormat::ALL.len() {
+                            apply_recommended(hwnd, OutputFormat::ALL[idx]);
+                        }
+                    }
+                }
+
+                ID_BEST_COMPROMISE => {
+                    debug!("settings_wndproc: Best Preset clicked");
+                    apply_best_compromise(hwnd);
                 }
 
                 ID_SAVE => {
@@ -672,6 +694,19 @@ unsafe fn create_controls(hwnd: HWND) {
         MARGIN, OPTIONS_Y_START, inner_w, 20, ID_SIZE_ESTIMATE,
     );
     send_font(est, font);
+
+    // Preset buttons — positioned dynamically by show_format_options()
+    let reset_btn = create_child(
+        hwnd, hinstance, w!("BUTTON"), "Reset Recommended",
+        MARGIN, OPTIONS_Y_START + 25, 160, CTRL_H, ID_RESET_RECOMMENDED,
+    );
+    send_font(reset_btn, font);
+
+    let best_btn = create_child(
+        hwnd, hinstance, w!("BUTTON"), "Best Preset (WebP 85)",
+        MARGIN + 170, OPTIONS_Y_START + 25, 180, CTRL_H, ID_BEST_COMPROMISE,
+    );
+    send_font(best_btn, font);
 
     // Show standard options for the current format, hide all others
     show_format_options(hwnd, format);
@@ -1114,6 +1149,23 @@ unsafe fn show_format_options(hwnd: HWND, format: OutputFormat) {
 
     // ─── Update size estimate ───
     update_size_estimate(hwnd, format);
+
+    // ─── Position preset buttons below the size estimate ───
+    let has_options = !matches!(format, OutputFormat::Bmp | OutputFormat::Qoi);
+    let btn_show = if has_options { SW_SHOW } else { SW_HIDE };
+    show_control(hwnd, ID_RESET_RECOMMENDED, btn_show);
+    // "Best Preset" always visible — it switches format
+    show_control(hwnd, ID_BEST_COMPROMISE, SW_SHOW);
+
+    // Dynamic Y: read the size estimate position and place buttons 25px below
+    let estimate_y = estimate_y_for_format(format, advanced, hwnd);
+    let buttons_y = estimate_y + 25;
+    move_control_y(hwnd, ID_RESET_RECOMMENDED, buttons_y, 160, CTRL_H);
+    // Place "Best Preset" to the right of "Reset Recommended"
+    if let Ok(ctrl) = GetDlgItem(Some(hwnd), ID_BEST_COMPROMISE) {
+        let x = if has_options { MARGIN + 170 } else { MARGIN };
+        let _ = MoveWindow(ctrl, x, buttons_y, 180, CTRL_H, true);
+    }
 }
 
 /// Shows or hides a control by its ID.
@@ -1222,7 +1274,22 @@ unsafe fn update_size_estimate(hwnd: HWND, format: OutputFormat) {
     let text = size_estimate_text(format, param1, param2);
 
     // Position after the last visible control for this format
-    let estimate_y = match format {
+    let estimate_y = estimate_y_for_format(format, advanced, hwnd);
+
+    move_control_y(hwnd, ID_SIZE_ESTIMATE, estimate_y, inner_w, 20);
+
+    if let Ok(ctrl) = GetDlgItem(Some(hwnd), ID_SIZE_ESTIMATE) {
+        set_text(ctrl, &text);
+        let _ = ShowWindow(ctrl, SW_SHOW);
+    }
+}
+
+/// Calculates the Y position for the size estimate label based on format and advanced state.
+///
+/// Extracted as a helper so both `update_size_estimate()` and `show_format_options()`
+/// can compute consistent button placement.
+unsafe fn estimate_y_for_format(format: OutputFormat, advanced: bool, hwnd: HWND) -> i32 {
+    match format {
         OutputFormat::Jpeg | OutputFormat::Png => {
             if advanced { ADVANCED_Y_START + 60 } else { OPTIONS_Y_START + 90 }
         }
@@ -1236,14 +1303,7 @@ unsafe fn update_size_estimate(hwnd: HWND, format: OutputFormat) {
         OutputFormat::Tiff | OutputFormat::OpenExr => {
             if advanced { OPTIONS_Y_START + 60 } else { OPTIONS_Y_START }
         }
-        _ => OPTIONS_Y_START, // BMP, QOI — no controls, estimate at top
-    };
-
-    move_control_y(hwnd, ID_SIZE_ESTIMATE, estimate_y, inner_w, 20);
-
-    if let Ok(ctrl) = GetDlgItem(Some(hwnd), ID_SIZE_ESTIMATE) {
-        set_text(ctrl, &text);
-        let _ = ShowWindow(ctrl, SW_SHOW);
+        _ => OPTIONS_Y_START, // BMP, QOI — no controls
     }
 }
 
@@ -1392,6 +1452,92 @@ fn avif_speed_label(speed: i32) -> String {
     } else {
         format!("{} \u{00B7} {}", speed, desc)
     }
+}
+
+// ======================== PRESET FUNCTIONS ========================
+
+/// Sets a trackbar (slider) control to the given position.
+unsafe fn set_slider(hwnd: HWND, id: i32, value: i32) {
+    if let Ok(ctrl) = GetDlgItem(Some(hwnd), id) {
+        SendMessageW(ctrl, TBM_SETPOS, Some(WPARAM(1)), Some(LPARAM(value as isize)));
+    }
+}
+
+/// Sets a combo box to the given selection index.
+unsafe fn set_combo_selection(hwnd: HWND, id: i32, index: usize) {
+    if let Ok(ctrl) = GetDlgItem(Some(hwnd), id) {
+        SendMessageW(ctrl, CB_SETCURSEL, Some(WPARAM(index)), None);
+    }
+}
+
+/// Resets the current format's options to recommended defaults.
+///
+/// Recommended defaults per format:
+/// - JPEG: quality=85, chroma=4:2:2
+/// - PNG: compression=6, filter=Adaptive
+/// - WebP: lossy, quality=85
+/// - AVIF: quality=80, speed=6
+/// - TIFF: LZW
+/// - OpenEXR: ZIP16
+unsafe fn apply_recommended(hwnd: HWND, format: OutputFormat) {
+    info!("apply_recommended: resetting {} to recommended defaults", format);
+
+    match format {
+        OutputFormat::Jpeg => {
+            set_slider(hwnd, ID_JPEG_QUALITY_SLIDER, 85);
+            set_combo_selection(hwnd, ID_JPEG_CHROMA_COMBO, 1); // 4:2:2
+        }
+        OutputFormat::Png => {
+            set_slider(hwnd, ID_PNG_COMPRESS_SLIDER, 6);
+            set_combo_selection(hwnd, ID_PNG_FILTER_COMBO, 0); // Adaptive
+        }
+        OutputFormat::WebP => {
+            set_combo_selection(hwnd, ID_WEBP_MODE_COMBO, 0); // Lossy
+            set_slider(hwnd, ID_WEBP_QUALITY_SLIDER, 85);
+            // Ensure quality controls are visible (switching from lossless → lossy)
+            show_control(hwnd, ID_WEBP_QUALITY_LABEL, SW_SHOW);
+            show_control(hwnd, ID_WEBP_QUALITY_SLIDER, SW_SHOW);
+            show_control(hwnd, ID_WEBP_QUALITY_VALUE, SW_SHOW);
+        }
+        OutputFormat::Avif => {
+            set_slider(hwnd, ID_AVIF_QUALITY_SLIDER, 80);
+            set_slider(hwnd, ID_AVIF_SPEED_SLIDER, 6);
+        }
+        OutputFormat::Tiff => {
+            set_combo_selection(hwnd, ID_TIFF_COMPRESS_COMBO, 1); // LZW
+        }
+        OutputFormat::OpenExr => {
+            set_combo_selection(hwnd, ID_EXR_COMPRESS_COMBO, 3); // ZIP16
+        }
+        _ => {} // BMP, QOI — no configurable options
+    }
+
+    // Refresh labels and size estimate
+    update_slider_labels(hwnd);
+}
+
+/// Applies the "best compromise" preset: WebP lossy quality 85.
+///
+/// WebP lossy at quality 85 offers the best balance of:
+/// - **Size**: ~3x smaller than JPEG at equivalent visual quality
+/// - **Compatibility**: supported by all modern browsers and AI tools
+/// - **Speed**: sub-100ms encoding (no UI freeze)
+/// - **Quality**: sharp text, minimal artifacts on screenshots
+unsafe fn apply_best_compromise(hwnd: HWND) {
+    info!("apply_best_compromise: switching to WebP lossy quality 85");
+
+    // Switch format combo to WebP (index 2 in OutputFormat::ALL)
+    set_combo_selection(hwnd, ID_FORMAT_COMBO, 2);
+
+    // Apply WebP recommended defaults
+    set_combo_selection(hwnd, ID_WEBP_MODE_COMBO, 0); // Lossy
+    set_slider(hwnd, ID_WEBP_QUALITY_SLIDER, 85);
+
+    // Refresh visibility for WebP format
+    show_format_options(hwnd, OutputFormat::WebP);
+
+    // Refresh labels
+    update_slider_labels(hwnd);
 }
 
 // ======================== HELPERS ========================

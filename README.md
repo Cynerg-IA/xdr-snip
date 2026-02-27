@@ -124,6 +124,12 @@ Single Rust binary using the `windows` crate for Win32/GDI and WinRT APIs:
 
 ## Release History
 
+### v0.4.6 — Preset buttons: Reset Recommended + Best Compromise (2026-02-28)
+
+- **"Reset Recommended" button** — one-click reset of the current format's options to recommended defaults (JPEG: q85/4:2:2, PNG: comp6/Adaptive, WebP: lossy/q85, AVIF: q80/speed6, TIFF: LZW, EXR: ZIP16)
+- **"Best Preset (WebP 85)" button** — applies the optimal quality/size/compatibility preset: WebP lossy at quality 85 (~3x smaller than JPEG, universal browser/AI support, sub-100ms encoding)
+- **Dynamic button placement** — preset buttons reposition below the active format's options, staying visible regardless of format or advanced mode
+
 ### v0.4.5 — Universal preview + format-agnostic thumbnails (2026-02-27)
 
 - **Preview works for ALL formats** — thumbnail generated from raw capture pixels instead of re-decoding the output file. Fixes WebP and AVIF preview failures (`image::open: format not supported`)

@@ -2,9 +2,10 @@
 //!
 //! The HDR capture logic lives in a C# executable that handles HDR → SDR
 //! tone-mapping via Windows.Graphics.Capture API. This module embeds the
-//! C# binary at compile time, extracts it to %APPDATA%/hdr-snip/ on first
-//! run, and invokes it as a subprocess.
+//! C# binary at compile time, extracts it on first run, and invokes it
+//! as a subprocess with no visible console window.
 
+use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
@@ -19,9 +20,13 @@ const CAPTURE_EXE_NAME: &str = "capture-hdr.exe";
 /// The build.ps1 script must build the C# component first.
 const EMBEDDED_CAPTURE_EXE: &[u8] = include_bytes!("../../../dist/capture-hdr.exe");
 
+/// Win32 CREATE_NO_WINDOW flag — prevents the subprocess from opening a
+/// visible console window.
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 /// Captures a screen region by invoking the embedded `capture-hdr.exe` tool.
 ///
-/// On first call, extracts the embedded binary to `%APPDATA%/hdr-snip/`.
+/// On first call, extracts the embedded binary next to the running executable.
 /// Subsequent calls reuse the extracted binary (re-extracted if size differs).
 ///
 /// # Arguments
@@ -76,8 +81,10 @@ pub fn capture_region(
 
     let start = Instant::now();
 
+    // Spawn the capture helper with no visible console window
     let result = Command::new(&capture_exe)
         .args(&args)
+        .creation_flags(CREATE_NO_WINDOW)
         .output()
         .map_err(|e| {
             SnipError::CaptureProcess(format!(
@@ -135,21 +142,85 @@ pub fn capture_region(
     Ok(())
 }
 
-/// Ensures the embedded `capture-hdr.exe` is extracted to the app data directory.
+// ======================== EXTRACTION ========================
+
+/// Ensures the embedded `capture-hdr.exe` is extracted and ready to run.
+///
+/// Tries multiple candidate directories in order:
+/// 1. Same directory as the running `hdr-snip.exe` (portable / Program Files)
+/// 2. `%LOCALAPPDATA%\Programs\hdr-snip\` (per-user install location)
+/// 3. `%APPDATA%\hdr-snip\` (legacy fallback)
 ///
 /// Extracts on first run or when the embedded binary size differs from the
-/// existing file (i.e., after an update). Returns the path to the extracted exe.
+/// existing file (i.e., after an update).
 fn ensure_capture_exe_extracted() -> Result<PathBuf, SnipError> {
-    let app_dir = dirs::config_dir()
-        .ok_or_else(|| SnipError::CaptureProcess("cannot determine config dir".to_string()))?
-        .join("hdr-snip");
+    let candidates = extraction_candidates();
 
-    // Ensure the directory exists
-    std::fs::create_dir_all(&app_dir).map_err(|e| {
-        SnipError::CaptureProcess(format!("cannot create app dir {}: {}", app_dir.display(), e))
+    if candidates.is_empty() {
+        return Err(SnipError::CaptureProcess(
+            "cannot determine any extraction directory".to_string(),
+        ));
+    }
+
+    for dir in &candidates {
+        match try_extract_in(dir) {
+            Ok(path) => return Ok(path),
+            Err(e) => {
+                debug!(
+                    "ensure_capture_exe_extracted: {} failed: {}",
+                    dir.display(),
+                    e
+                );
+            }
+        }
+    }
+
+    Err(SnipError::CaptureProcess(format!(
+        "cannot extract {} to any location (tried {} dirs)",
+        CAPTURE_EXE_NAME,
+        candidates.len()
+    )))
+}
+
+/// Builds the list of candidate directories for extracting the capture helper.
+fn extraction_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::with_capacity(3);
+
+    // Primary: same directory as the running executable
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            candidates.push(dir.to_path_buf());
+        }
+    }
+
+    // Fallback: %LOCALAPPDATA%\Programs\hdr-snip
+    if let Some(local_data) = dirs::data_local_dir() {
+        candidates.push(local_data.join("Programs").join("hdr-snip"));
+    }
+
+    // Last resort: %APPDATA%\hdr-snip
+    if let Some(config) = dirs::config_dir() {
+        candidates.push(config.join("hdr-snip"));
+    }
+
+    debug!(
+        "extraction_candidates: {} candidates",
+        candidates.len()
+    );
+
+    candidates
+}
+
+/// Attempts to extract the embedded capture-hdr.exe into `dir`.
+///
+/// Creates the directory if needed. Skips extraction if the file already exists
+/// and the size matches (same version).
+fn try_extract_in(dir: &Path) -> Result<PathBuf, SnipError> {
+    std::fs::create_dir_all(dir).map_err(|e| {
+        SnipError::CaptureProcess(format!("cannot create {}: {}", dir.display(), e))
     })?;
 
-    let capture_path = app_dir.join(CAPTURE_EXE_NAME);
+    let capture_path = dir.join(CAPTURE_EXE_NAME);
 
     // Check if extraction is needed (missing or size mismatch = new version)
     let needs_extract = if capture_path.exists() {
@@ -161,15 +232,20 @@ fn ensure_capture_exe_extracted() -> Result<PathBuf, SnipError> {
 
         if existing_size != embedded_size {
             debug!(
-                "ensure_capture_exe_extracted: size mismatch (existing={}, embedded={}), re-extracting",
-                existing_size, embedded_size
+                "try_extract_in: size mismatch at {} (existing={}, embedded={})",
+                capture_path.display(),
+                existing_size,
+                embedded_size
             );
             true
         } else {
             false
         }
     } else {
-        debug!("ensure_capture_exe_extracted: not found, extracting");
+        debug!(
+            "try_extract_in: not found at {}, extracting",
+            capture_path.display()
+        );
         true
     };
 
@@ -183,13 +259,13 @@ fn ensure_capture_exe_extracted() -> Result<PathBuf, SnipError> {
         })?;
 
         info!(
-            "ensure_capture_exe_extracted: extracted {} bytes to {}",
+            "try_extract_in: extracted {} bytes to {}",
             EMBEDDED_CAPTURE_EXE.len(),
             capture_path.display()
         );
     } else {
         debug!(
-            "ensure_capture_exe_extracted: up to date at {}",
+            "try_extract_in: up to date at {}",
             capture_path.display()
         );
     }

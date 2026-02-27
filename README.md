@@ -9,25 +9,27 @@
   <img src="assets/social-preview.png" alt="XDR Snip" width="720">
 </p>
 
-Lightweight screenshot tool for Windows 11. Select a region on a frozen screen, get a small JPEG — ready to paste into Claude, browsers, or any app.
+Lightweight screenshot tool for Windows 11. Select a region on a frozen screen, save in your format of choice — ready to paste into Claude, browsers, or any app.
 
 ## Why
 
 - **Windows clipboard sends uncompressed bitmaps** — a 1080p screenshot becomes 6MB+ when pasted, crashing Claude Code conversations
-- **XDR Snip outputs JPEG** — captures from a frozen screen overlay, encodes to JPEG at ~200-800KB
+- **XDR Snip compresses intelligently** — captures from a frozen screen overlay, encodes to your chosen format (JPEG, PNG, WebP, AVIF, TIFF, BMP, QOI, or OpenEXR)
 - **What you select is what you get** — the output matches exactly what you saw during selection, even if the underlying screen changes
 
 ## Features
 
 - **Print Screen** → fullscreen frozen overlay → drag to select region
-- **HDR + SDR support** — WinRT Graphics Capture with Extended Reinhard tone mapping; automatic fallback to GDI for compatibility
+- **HDR + WCG + SDR** — WinRT Graphics Capture with Extended Reinhard tone mapping for HDR, max-channel Reinhard for Wide Color Gamut; automatic GDI fallback
 - **Frozen capture** — screen freezes instantly; pixels are extracted from the snapshot, not a live re-capture
-- **JPEG output** — configurable quality (default 85%), typically 200-800KB for a full screen
+- **8 output formats** — JPEG (with chroma subsampling), PNG, WebP (lossy + lossless), AVIF, TIFF, BMP, QOI, OpenEXR (preserves raw HDR f16 data)
+- **Per-format settings** — quality sliders, compression levels, filter strategies — all tunable from the settings dialog
 - **Clipboard + file** — copies to clipboard and saves to `~/Pictures/XDR-Snips/`
 - **System tray** — right-click for Take Screenshot, Open Folder, Settings, Quit
-- **Settings window** — change save path and JPEG quality without editing config files
+- **Settings window** — format selector with per-format options, save path, all without editing config files
 - **Capture preview** — popup with thumbnail, dimensions, file size, clipboard status (auto-closes after 5s, click to open file)
-- **Single exe** — ~11MB, no installer, no dependencies, no .NET runtime
+- **Legacy config migration** — old configs with bare `quality` field auto-migrate to the new format
+- **Single exe** — no installer, no dependencies, no .NET runtime
 - **DPI-aware** — per-monitor DPI v2, correct coordinates on mixed-DPI setups
 
 ## Demo
@@ -63,9 +65,25 @@ Config file: `%APPDATA%\xdr-snip\config.toml` (created on first run with default
 
 ```toml
 [capture]
-quality = 85                          # JPEG quality 50-100 (recommended: 85)
+format = "jpeg"                       # jpeg, png, webp, avif, tiff, bmp, qoi, openexr
 save_dir = "~/Pictures/XDR-Snips"     # Output directory
 filename_pattern = "screenshot_{timestamp}"
+
+[capture.format_options.jpeg]
+quality = 85                          # 50-100 (recommended: 85)
+chroma_subsampling = "4:2:2"          # "4:4:4", "4:2:2", "4:2:0"
+
+[capture.format_options.png]
+compression = 6                       # 0 (fast) to 9 (max)
+filter = "adaptive"                   # adaptive, none, sub, up, average, paeth
+
+[capture.format_options.webp]
+lossless = false
+quality = 80.0                        # 0-100 (lossy only)
+
+[capture.format_options.avif]
+quality = 80                          # 1-100
+speed = 4                             # 1 (slowest/best) to 10 (fastest)
 
 [hotkey]
 key = "PrintScreen"                   # Trigger key
@@ -86,12 +104,12 @@ Single Rust binary using the `windows` crate for Win32/GDI and WinRT APIs:
 | `main.rs` | DPI setup, message loop, hotkey + tray event dispatch, dual-capture orchestration |
 | `hdr_capture.rs` | WinRT Graphics Capture — per-monitor HDR frame acquisition (D3D11, R16G16B16A16Float) |
 | `overlay.rs` | Frozen-screen overlay (GDI BitBlt) with double-buffered region selection |
-| `capture.rs` | HDR tone mapping (Extended Reinhard) + JPEG encoder |
-| `clipboard.rs` | Decode JPEG → set clipboard image via `arboard` |
+| `capture.rs` | HDR/WCG tone mapping (Extended Reinhard + max-channel Reinhard) + 8-format encoder dispatcher |
+| `clipboard.rs` | Raw RGB8 pixels → clipboard image via `arboard` (format-agnostic, no decode roundtrip) |
 | `preview.rs` | Capture preview popup — thumbnail + info text (click to open, auto-closes after 5s) |
-| `settings.rs` | GUI settings dialog — save path + quality slider with size estimates |
+| `settings.rs` | GUI settings dialog — format selector, per-format options, save path |
 | `tray.rs` | System tray icon + context menu via `tray-icon` crate |
-| `config.rs` | TOML config load/validate from `%APPDATA%` |
+| `config.rs` | TOML config load/validate from `%APPDATA%` + legacy config migration |
 
 ### Capture Pipeline
 
@@ -100,10 +118,21 @@ Single Rust binary using the `windows` crate for Win32/GDI and WinRT APIs:
 3. **GDI** `BitBlt` captures the virtual screen for the frozen overlay display
 4. Screen freezes: dimmed version shown as background, selected region at full brightness
 5. User releases mouse → identifies target monitor
-6. If WinRT frame available: crop + Extended Reinhard tone map → RGB8. Otherwise: GDI fallback via `GetDIBits`
-7. JPEG encode via `image` crate → file saved + clipboard set + preview popup
+6. If WinRT frame available: crop + tone map (Extended Reinhard for HDR, max-channel Reinhard for WCG) → RGB8. Otherwise: GDI fallback via `GetDIBits`
+7. Encode in configured format → file saved + clipboard set + preview popup. OpenEXR preserves raw f16 HDR data without tone mapping
 
 ## Release History
+
+### v0.4.0 — Multi-format output (2026-02-27)
+
+- **8 output formats** — JPEG, PNG, WebP (lossy + lossless), AVIF, TIFF, BMP, QOI, OpenEXR
+- **Per-format options** — quality sliders, compression levels, chroma subsampling, filter strategies — all configurable in the settings dialog
+- **OpenEXR HDR preservation** — saves raw f16 pixel data without tone mapping
+- **Wide Color Gamut fix** — P3/wide-gamut colors now compress via max-channel Reinhard instead of being hard-clamped to sRGB
+- **Settings redesign** — format dropdown with dynamic per-format option controls (show/hide on selection)
+- **Format-agnostic clipboard** — copies raw pixels directly, no file decode roundtrip
+- **Legacy config migration** — old configs with bare `quality` field auto-migrate to the new format structure
+- Removed legacy C# `capture-hdr/` directory and stale name references
 
 ### v0.3.0 — HDR capture re-integration (2026-02-27)
 

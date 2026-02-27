@@ -1,7 +1,29 @@
 [capture]
-quality = 85
+format = "jpeg"
 save_dir = "~/Pictures/XDR-Snips"
 filename_pattern = "screenshot_{timestamp}"
+
+[capture.format_options.jpeg]
+quality = 85
+chroma_subsampling = "4:2:2"
+
+[capture.format_options.png]
+compression = 6
+filter = "adaptive"
+
+[capture.format_options.webp]
+lossless = false
+quality = 80.0
+
+[capture.format_options.avif]
+quality = 80
+speed = 4
+
+[capture.format_options.tiff]
+compression = "lzw"
+
+[capture.format_options.exr]
+compression = "zip16"
 
 [hotkey]
 key = "PrintScreen"

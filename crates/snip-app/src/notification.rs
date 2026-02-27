@@ -1,27 +1,39 @@
 //! System notifications — shows a balloon tip via the Win32 Shell_NotifyIcon API.
 //!
-//! For the MVP we use the classic Shell_NotifyIcon balloon rather than the
-//! modern ToastNotification API.  This avoids COM/WinRT initialization
-//! complexity while still displaying a visible notification with capture details.
+//! Creates a hidden message-only window as the notification anchor. This is
+//! required because Shell_NotifyIconW needs a valid HWND to deliver balloon
+//! callback messages. The hidden window is created once and reused.
 
 use std::mem;
 use std::path::Path;
 
 use image::ImageReader;
 use snip_types::SnipError;
-use tracing::{debug, error, info, warn};
-use windows::Win32::Foundation::HWND;
+use tracing::{debug, error, info};
+use windows::core::w;
+use windows::Win32::Foundation::{HWND, HINSTANCE, LRESULT, WPARAM, LPARAM};
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Shell::{
     Shell_NotifyIconW, NOTIFYICONDATAW, NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP, NIM_ADD,
     NIM_DELETE, NIM_MODIFY,
 };
-use windows::Win32::UI::WindowsAndMessaging::{LoadIconW, IDI_INFORMATION};
+use windows::Win32::UI::WindowsAndMessaging::{
+    CreateWindowExW, DefWindowProcW, DestroyWindow, LoadIconW, RegisterClassW,
+    IDI_INFORMATION, WINDOW_EX_STYLE, WNDCLASSW, WS_POPUP,
+};
 
 /// User-message ID for tray icon callbacks (arbitrary, must be > WM_USER).
 const WM_TRAY_CALLBACK: u32 = 0x0401;
 
 /// Unique ID for our notification icon in the tray area.
 const NOTIFY_ICON_ID: u32 = 1;
+
+/// HWND_MESSAGE parent — creates a message-only window (not visible, no taskbar).
+const HWND_MESSAGE: HWND = HWND(-3isize as *mut _);
+
+/// Hidden message-only window used as the notification anchor.
+/// Created on first notification, reused for subsequent ones.
+static mut NOTIFY_HWND: HWND = HWND(std::ptr::null_mut());
 
 /// Shows a balloon notification indicating a screenshot was captured.
 ///
@@ -79,6 +91,10 @@ pub fn show_capture_notification(
         body
     );
 
+    // Ensure the hidden notification window exists
+    let notify_hwnd = ensure_notify_window()?;
+    debug!("show_capture_notification: using HWND {:?}", notify_hwnd.0);
+
     // Load the system information icon as a fallback
     // SAFETY: LoadIconW with a system icon ID is always safe.
     let icon = unsafe { LoadIconW(None, IDI_INFORMATION) }
@@ -88,7 +104,7 @@ pub fn show_capture_notification(
     // null, and we fill in the required ones below.
     let mut nid: NOTIFYICONDATAW = unsafe { mem::zeroed() };
     nid.cbSize = mem::size_of::<NOTIFYICONDATAW>() as u32;
-    nid.hWnd = HWND::default(); // no associated window
+    nid.hWnd = notify_hwnd;
     nid.uID = NOTIFY_ICON_ID;
     nid.uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE | NIF_INFO;
     nid.uCallbackMessage = WM_TRAY_CALLBACK;
@@ -101,12 +117,12 @@ pub fn show_capture_notification(
     set_wide_string(&mut nid.szInfoTitle, "Screenshot saved");
     set_wide_string(&mut nid.szInfo, &body);
 
-    // Add the notification icon
+    // Add the notification icon (or modify if it already exists from a previous capture)
     // SAFETY: Shell_NotifyIconW is safe with a properly initialized NOTIFYICONDATAW.
     let added = unsafe { Shell_NotifyIconW(NIM_ADD, &nid) };
     if !added.as_bool() {
-        warn!("show_capture_notification: NIM_ADD failed, trying NIM_MODIFY");
-        // Icon might already exist from a previous capture — try modifying instead
+        debug!("show_capture_notification: NIM_ADD failed, trying NIM_MODIFY");
+        // Icon already exists from a previous capture — modify to show new balloon
         let modified = unsafe { Shell_NotifyIconW(NIM_MODIFY, &nid) };
         if !modified.as_bool() {
             error!("show_capture_notification: NIM_MODIFY also failed");
@@ -121,23 +137,110 @@ pub fn show_capture_notification(
     Ok(())
 }
 
-/// Removes the notification icon from the tray area (call on app exit).
+/// Removes the notification icon from the tray area and destroys the hidden
+/// message window (call on app exit).
 ///
 /// Safe to call even if no icon was added — failure is logged but not fatal.
 pub fn remove_notification_icon() {
     debug!("remove_notification_icon: removing tray notification icon");
 
-    // SAFETY: zeroed struct with only cbSize and uID set is valid for NIM_DELETE.
-    let mut nid: NOTIFYICONDATAW = unsafe { mem::zeroed() };
-    nid.cbSize = mem::size_of::<NOTIFYICONDATAW>() as u32;
-    nid.hWnd = HWND::default();
-    nid.uID = NOTIFY_ICON_ID;
+    unsafe {
+        let hwnd = std::ptr::addr_of!(NOTIFY_HWND).read();
 
-    // SAFETY: Shell_NotifyIconW NIM_DELETE is safe with a minimal struct and valid ID.
-    let ok = unsafe { Shell_NotifyIconW(NIM_DELETE, &nid) };
-    if !ok.as_bool() {
-        debug!("remove_notification_icon: NIM_DELETE returned false (icon may not exist)");
+        // Remove the Shell_NotifyIcon entry
+        let mut nid: NOTIFYICONDATAW = mem::zeroed();
+        nid.cbSize = mem::size_of::<NOTIFYICONDATAW>() as u32;
+        nid.hWnd = hwnd;
+        nid.uID = NOTIFY_ICON_ID;
+
+        let ok = Shell_NotifyIconW(NIM_DELETE, &nid);
+        if !ok.as_bool() {
+            debug!("remove_notification_icon: NIM_DELETE returned false (icon may not exist)");
+        }
+
+        // Destroy the hidden message window
+        if !hwnd.is_invalid() && hwnd.0 != std::ptr::null_mut() {
+            let _ = DestroyWindow(hwnd);
+            NOTIFY_HWND = HWND(std::ptr::null_mut());
+            debug!("remove_notification_icon: hidden window destroyed");
+        }
     }
+}
+
+// ======================== HIDDEN WINDOW ========================
+
+/// Creates (or returns the existing) hidden message-only window used as the
+/// notification anchor for Shell_NotifyIconW.
+///
+/// A message-only window (parented to HWND_MESSAGE) is invisible, has no
+/// taskbar entry, and exists solely to receive Win32 messages.
+fn ensure_notify_window() -> Result<HWND, SnipError> {
+    // SAFETY: single-threaded — only the main thread calls this.
+    unsafe {
+        let existing = std::ptr::addr_of!(NOTIFY_HWND).read();
+        if !existing.is_invalid() && existing.0 != std::ptr::null_mut() {
+            return Ok(existing);
+        }
+    }
+
+    debug!("ensure_notify_window: creating hidden message-only window");
+
+    let hinstance: HINSTANCE = unsafe { GetModuleHandleW(None) }
+        .map_err(|e| SnipError::Notification(format!("GetModuleHandleW: {}", e)))?
+        .into();
+
+    // Register a minimal window class for the notification window
+    let wc = WNDCLASSW {
+        lpfnWndProc: Some(notify_wndproc),
+        hInstance: hinstance,
+        lpszClassName: w!("XdrSnipNotify"),
+        ..Default::default()
+    };
+
+    // RegisterClassW returns 0 if the class already exists — that's fine
+    let _ = unsafe { RegisterClassW(&wc) };
+
+    // Create a message-only window (not visible, no taskbar)
+    let hwnd = unsafe {
+        CreateWindowExW(
+            WINDOW_EX_STYLE::default(),
+            w!("XdrSnipNotify"),
+            w!("XDR Snip Notification"),
+            WS_POPUP,
+            0,
+            0,
+            0,
+            0,
+            Some(HWND_MESSAGE),
+            None,
+            Some(hinstance),
+            None,
+        )
+    }
+    .map_err(|e| SnipError::Notification(format!("CreateWindowExW (notify): {}", e)))?;
+
+    debug!("ensure_notify_window: created HWND {:?}", hwnd.0);
+
+    // Store for reuse
+    unsafe {
+        NOTIFY_HWND = hwnd;
+    }
+
+    Ok(hwnd)
+}
+
+/// Minimal WNDPROC for the hidden notification window — delegates everything
+/// to DefWindowProcW.
+///
+/// # Safety
+/// Called by Windows — must follow the WNDPROC contract.
+unsafe extern "system" fn notify_wndproc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    DefWindowProcW(hwnd, msg, wparam, lparam)
 }
 
 // ======================== HELPERS ========================

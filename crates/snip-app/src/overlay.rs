@@ -14,11 +14,11 @@ use windows::Win32::Foundation::{
     BOOL, COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM,
 };
 use windows::Win32::Graphics::Gdi::{
-    AlphaBlend, BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, CreatePen,
+    AlphaBlend, BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC,
     CreateSolidBrush, DeleteDC, DeleteObject, EndPaint, EnumDisplayMonitors, FrameRect, GetDC,
     GetMonitorInfoW, InvalidateRect, MonitorFromPoint, ReleaseDC, SelectObject, AC_SRC_OVER,
     BLENDFUNCTION, HDC, HMONITOR, MONITORINFO, MONITOR_DEFAULTTONEAREST, PAINTSTRUCT,
-    PS_SOLID, SRCCOPY,
+    SRCCOPY,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Input::KeyboardAndMouse::{SetCapture, VK_ESCAPE};
@@ -68,9 +68,6 @@ static mut SCREEN_W: i32 = 0;
 
 /// Virtual screen height in pixels.
 static mut SCREEN_H: i32 = 0;
-
-/// Selection rectangle border thickness in pixels.
-const SELECTION_BORDER_PX: i32 = 2;
 
 /// Minimum drag size — prevents accidental single clicks.
 const MIN_REGION_SIZE: u32 = 4;
@@ -486,17 +483,24 @@ unsafe extern "system" fn overlay_wndproc(
             let mut ps = PAINTSTRUCT::default();
             let hdc = BeginPaint(hwnd, &mut ps);
 
-            // Paint the dimmed (dark) frozen screen as the full background
             let dim = std::ptr::addr_of!(DIM_DC).read();
             let screen = std::ptr::addr_of!(SCREEN_DC).read();
             let sw = std::ptr::addr_of!(SCREEN_W).read();
             let sh = std::ptr::addr_of!(SCREEN_H).read();
 
+            // Double-buffer: paint everything to a back-buffer DC, then
+            // single BitBlt to screen. Eliminates flickering from intermediate
+            // states (dimmed bg painted before bright selection appears).
+            let back_dc = CreateCompatibleDC(Some(hdc));
+            let back_bmp = CreateCompatibleBitmap(hdc, sw, sh);
+            let old_bmp = SelectObject(back_dc, back_bmp.into());
+
+            // 1. Paint the dimmed (dark) frozen screen as full background
             if !dim.is_invalid() {
-                let _ = BitBlt(hdc, 0, 0, sw, sh, Some(dim), 0, 0, SRCCOPY);
+                let _ = BitBlt(back_dc, 0, 0, sw, sh, Some(dim), 0, 0, SRCCOPY);
             }
 
-            // If dragging, show the selected area at full brightness
+            // 2. If dragging, show the selected area at full brightness
             if IS_DRAGGING && !screen.is_invalid() {
                 let sel_left = DRAG_START.x.min(DRAG_CURRENT.x) - VSCREEN_X;
                 let sel_top = DRAG_START.y.min(DRAG_CURRENT.y) - VSCREEN_Y;
@@ -508,7 +512,7 @@ unsafe extern "system" fn overlay_wndproc(
                 if sel_w > 0 && sel_h > 0 {
                     // BitBlt the original (bright) image for just the selection area
                     let _ = BitBlt(
-                        hdc,
+                        back_dc,
                         sel_left,
                         sel_top,
                         sel_w,
@@ -528,16 +532,19 @@ unsafe extern "system" fn overlay_wndproc(
                     };
 
                     let cyan = COLORREF(0x00FFFF00); // BGR: cyan
-                    let pen = CreatePen(PS_SOLID, SELECTION_BORDER_PX, cyan);
                     let brush = CreateSolidBrush(cyan);
-                    let _old_pen = SelectObject(hdc, pen.into());
-
-                    FrameRect(hdc, &sel_rect, brush);
-
-                    let _ = DeleteObject(pen.into());
+                    FrameRect(back_dc, &sel_rect, brush);
                     let _ = DeleteObject(brush.into());
                 }
             }
+
+            // 3. Single blit from back buffer to screen — flicker-free
+            let _ = BitBlt(hdc, 0, 0, sw, sh, Some(back_dc), 0, 0, SRCCOPY);
+
+            // Clean up back buffer
+            SelectObject(back_dc, old_bmp);
+            let _ = DeleteObject(back_bmp.into());
+            let _ = DeleteDC(back_dc);
 
             let _ = EndPaint(hwnd, &ps);
             LRESULT(0)

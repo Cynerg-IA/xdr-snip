@@ -1,13 +1,11 @@
 /// Build script for snip-app.
 ///
-/// Placeholder — will embed `assets/icon.ico` as a Windows resource
-/// once the icon file is available.  For now this is a no-op so the
-/// build stays green.
+/// Sets up rerun-if-changed for the embedded capture-hdr.exe binary.
+/// The C# exe must be built first (via build.ps1 or manually) and placed
+/// in the `dist/` directory at the workspace root.
 fn main() {
+    // Re-run if the embedded capture helper changes
+    println!("cargo:rerun-if-changed=../../dist/capture-hdr.exe");
+
     // TODO: embed icon.ico as RT_ICON resource via winres or embed-resource crate
-    // Example (once icon exists):
-    //
-    // let mut res = winres::WindowsResource::new();
-    // res.set_icon("../../assets/icon.ico");
-    // res.compile().expect("failed to compile Windows resource");
 }

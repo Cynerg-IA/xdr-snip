@@ -1,5 +1,5 @@
 [package]
-name = "snip-app"
+name = "hdr-snip"
 version = "0.1.0"
 edition = "2021"
 description = "HDR-aware screenshot tool for Windows — region select, capture, clipboard, tray"

@@ -1,30 +1,37 @@
-//! Screenshot capture via external `capture-hdr.exe` subprocess.
+//! Screenshot capture via embedded `capture-hdr.exe` subprocess.
 //!
-//! The HDR capture logic lives in a separate C++/DirectX executable that handles
-//! the complexity of HDR → SDR tone-mapping and multi-monitor DPI.  This module
-//! locates the executable, spawns it with the correct arguments, and checks the
-//! result.
+//! The HDR capture logic lives in a C# executable that handles HDR → SDR
+//! tone-mapping via Windows.Graphics.Capture API. This module embeds the
+//! C# binary at compile time, extracts it to %APPDATA%/hdr-snip/ on first
+//! run, and invokes it as a subprocess.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
 
 use snip_types::{Region, SnipError};
 use tracing::{debug, error, info};
 
-/// Name of the HDR capture helper executable expected next to our own binary.
+/// Name of the HDR capture helper executable.
 const CAPTURE_EXE_NAME: &str = "capture-hdr.exe";
 
-/// Captures a screen region by invoking the external `capture-hdr.exe` tool.
+/// Embedded capture-hdr.exe binary (built by C# project, placed in dist/).
+/// The build.ps1 script must build the C# component first.
+const EMBEDDED_CAPTURE_EXE: &[u8] = include_bytes!("../../../dist/capture-hdr.exe");
+
+/// Captures a screen region by invoking the embedded `capture-hdr.exe` tool.
+///
+/// On first call, extracts the embedded binary to `%APPDATA%/hdr-snip/`.
+/// Subsequent calls reuse the extracted binary (re-extracted if size differs).
 ///
 /// # Arguments
 /// * `region` — monitor-relative rectangle to capture.
-/// * `monitor` — opaque monitor identifier passed to the helper.
+/// * `monitor` — monitor index passed to the helper.
 /// * `quality` — JPEG quality (1-100).
 /// * `output` — destination file path for the JPEG.
 ///
 /// # Errors
-/// Returns [`SnipError::CaptureProcess`] if the helper cannot be found or
+/// Returns [`SnipError::CaptureProcess`] if the helper cannot be extracted or
 /// launched, and [`SnipError::CaptureFailed`] if it exits with a non-zero code.
 pub fn capture_region(
     region: &Region,
@@ -40,7 +47,7 @@ pub fn capture_region(
         output.display()
     );
 
-    let capture_exe = locate_capture_exe()?;
+    let capture_exe = ensure_capture_exe_extracted()?;
 
     debug!(
         "capture_region: using helper at {}",
@@ -128,34 +135,64 @@ pub fn capture_region(
     Ok(())
 }
 
-/// Locates `capture-hdr.exe` adjacent to the running executable.
+/// Ensures the embedded `capture-hdr.exe` is extracted to the app data directory.
 ///
-/// The helper is expected to live in the same directory as `snip-app.exe`.
-fn locate_capture_exe() -> Result<std::path::PathBuf, SnipError> {
-    let exe_dir = std::env::current_exe()
-        .map_err(|e| {
-            SnipError::CaptureProcess(format!("cannot determine own exe path: {}", e))
-        })?
-        .parent()
-        .ok_or_else(|| {
-            SnipError::CaptureProcess("exe path has no parent directory".to_string())
-        })?
-        .to_path_buf();
+/// Extracts on first run or when the embedded binary size differs from the
+/// existing file (i.e., after an update). Returns the path to the extracted exe.
+fn ensure_capture_exe_extracted() -> Result<PathBuf, SnipError> {
+    let app_dir = dirs::config_dir()
+        .ok_or_else(|| SnipError::CaptureProcess("cannot determine config dir".to_string()))?
+        .join("hdr-snip");
 
-    let capture_path = exe_dir.join(CAPTURE_EXE_NAME);
+    // Ensure the directory exists
+    std::fs::create_dir_all(&app_dir).map_err(|e| {
+        SnipError::CaptureProcess(format!("cannot create app dir {}: {}", app_dir.display(), e))
+    })?;
 
-    if !capture_path.exists() {
-        return Err(SnipError::CaptureProcess(format!(
-            "{} not found at {}",
-            CAPTURE_EXE_NAME,
+    let capture_path = app_dir.join(CAPTURE_EXE_NAME);
+
+    // Check if extraction is needed (missing or size mismatch = new version)
+    let needs_extract = if capture_path.exists() {
+        let existing_size = capture_path
+            .metadata()
+            .map(|m| m.len())
+            .unwrap_or(0);
+        let embedded_size = EMBEDDED_CAPTURE_EXE.len() as u64;
+
+        if existing_size != embedded_size {
+            debug!(
+                "ensure_capture_exe_extracted: size mismatch (existing={}, embedded={}), re-extracting",
+                existing_size, embedded_size
+            );
+            true
+        } else {
+            false
+        }
+    } else {
+        debug!("ensure_capture_exe_extracted: not found, extracting");
+        true
+    };
+
+    if needs_extract {
+        std::fs::write(&capture_path, EMBEDDED_CAPTURE_EXE).map_err(|e| {
+            SnipError::CaptureProcess(format!(
+                "cannot write {}: {}",
+                capture_path.display(),
+                e
+            ))
+        })?;
+
+        info!(
+            "ensure_capture_exe_extracted: extracted {} bytes to {}",
+            EMBEDDED_CAPTURE_EXE.len(),
             capture_path.display()
-        )));
+        );
+    } else {
+        debug!(
+            "ensure_capture_exe_extracted: up to date at {}",
+            capture_path.display()
+        );
     }
-
-    debug!(
-        "locate_capture_exe: found at {}",
-        capture_path.display()
-    );
 
     Ok(capture_path)
 }

@@ -115,7 +115,7 @@ fn default_quality() -> u32 {
     85
 }
 
-/// Default save directory — `~/Pictures/HDR-Snips` for clean separation from
+/// Default save directory — `~/Pictures/XDR-Snips` for clean separation from
 /// other screenshot tools.
 fn default_save_dir() -> String {
     "~/Pictures/XDR-Snips".to_string()
@@ -159,7 +159,7 @@ impl fmt::Display for Region {
 
 // ======================== ERRORS ========================
 
-/// Central error type for all HDR Snip operations.
+/// Central error type for all XDR Snip operations.
 #[derive(Debug, thiserror::Error)]
 pub enum SnipError {
     /// Configuration loading or parsing failure.

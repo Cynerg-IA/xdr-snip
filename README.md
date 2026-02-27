@@ -14,7 +14,8 @@ Lightweight HDR-aware screenshot tool for Windows 11. Select a region, capture i
 - **HDR tone mapping** — Extended Reinhard (luminance-preserving), correct on both HDR and SDR content
 - **JPEG output** — configurable quality (default 85%), typically 200-800KB for a full screen
 - **Clipboard + file** — copies to clipboard and saves to `~/Pictures/XDR-Snips/`
-- **System tray** — right-click for Take Screenshot, Open Folder, Quit
+- **System tray** — right-click for Take Screenshot, Open Folder, Settings, Quit
+- **Settings window** — change save path and JPEG quality without editing config files
 - **Capture preview** — popup with thumbnail, dimensions, file size, clipboard status (auto-closes after 4s)
 - **Single exe** — ~11MB, no installer, no dependencies, no .NET runtime
 - **DPI-aware** — per-monitor DPI v2, correct coordinates on mixed-DPI setups
@@ -31,11 +32,17 @@ The selected region appears at full brightness with a cyan border. Escape or rig
 
 Download `xdr-snip.exe` from [Releases](https://github.com/db-cynerg-ia/xdr-snip/releases) and run it. No installation needed.
 
+> **⚠️ Important: Unbind Windows Snipping Tool first!**
+>
+> Windows 11 intercepts Print Screen before any app can see it. You must disable this:
+>
+> **Settings → Accessibility → Keyboard → toggle OFF "Use the Print Screen key to open screen capture"**
+>
+> Without this step, XDR Snip will never receive the hotkey.
+
 ### Prerequisites
 
 - Windows 10 1903+ (Windows.Graphics.Capture API)
-- **Disable the built-in Print Screen → Snipping Tool binding:**
-  Settings → Accessibility → Keyboard → toggle off "Use the Print Screen key to open screen capture"
 
 ## Build from source
 
@@ -76,6 +83,7 @@ Single Rust binary using the `windows` crate for all Win32 and WinRT APIs:
 | `capture.rs` | `Windows.Graphics.Capture` → D3D11 → HDR tone map → JPEG encode |
 | `clipboard.rs` | Decode JPEG → set `CF_DIB` via `arboard` |
 | `preview.rs` | Capture preview popup — thumbnail + info text (auto-closes after 4s) |
+| `settings.rs` | GUI settings dialog — save path + quality slider |
 | `tray.rs` | System tray icon + context menu via `tray-icon` crate |
 | `config.rs` | TOML config load/validate from `%APPDATA%` |
 

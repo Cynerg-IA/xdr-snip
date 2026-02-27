@@ -13,6 +13,7 @@ mod config;
 mod hotkey;
 mod overlay;
 mod preview;
+mod settings;
 mod tray;
 
 use std::fs;
@@ -71,12 +72,12 @@ fn main() {
 
 /// Core application logic, separated from `main` for clean error propagation.
 fn run() -> Result<(), SnipError> {
-    // Load configuration
-    let cfg = config::load_config()?;
+    // Load configuration (mutable — settings dialog can hot-reload)
+    let mut cfg = config::load_config()?;
     info!("config loaded: {:?}", cfg);
 
     // Resolve the save directory early so we fail fast on bad paths
-    let save_dir = config::expand_tilde(&cfg.capture.save_dir);
+    let mut save_dir = config::expand_tilde(&cfg.capture.save_dir);
     if !save_dir.exists() {
         info!(
             "save directory does not exist, creating: {}",
@@ -135,7 +136,7 @@ fn run() -> Result<(), SnipError> {
                 open_folder(&save_dir);
             } else if clicked_id == tray_ids.settings {
                 debug!("main: menu -> Settings");
-                open_config_file();
+                handle_settings(&mut cfg, &mut save_dir);
             } else if clicked_id == tray_ids.quit {
                 info!("main: menu -> Quit");
                 break;
@@ -287,16 +288,28 @@ fn open_folder(path: &PathBuf) {
     info!("open_folder: dispatched for {}", path.display());
 }
 
-/// Opens the config file (`%APPDATA%/xdr-snip/config.toml`) in the default editor.
-fn open_config_file() {
-    match config::config_file_path() {
-        Ok(path) => {
-            debug!("open_config_file: opening {}", path.display());
-            shell_open(&path.to_string_lossy());
-            info!("open_config_file: dispatched for {}", path.display());
+/// Opens the settings dialog and hot-reloads config if the user saves.
+fn handle_settings(cfg: &mut snip_types::Config, save_dir: &mut PathBuf) {
+    match settings::open_settings(cfg) {
+        Ok(Some(new_cfg)) => {
+            info!("handle_settings: config updated, hot-reloading");
+            // Update the save directory if it changed
+            let new_dir = config::expand_tilde(&new_cfg.capture.save_dir);
+            if !new_dir.exists() {
+                info!(
+                    "handle_settings: creating new save directory: {}",
+                    new_dir.display()
+                );
+                let _ = fs::create_dir_all(&new_dir);
+            }
+            *save_dir = new_dir;
+            *cfg = new_cfg;
+        }
+        Ok(None) => {
+            debug!("handle_settings: user cancelled");
         }
         Err(e) => {
-            warn!("open_config_file: failed to resolve config path: {}", e);
+            warn!("handle_settings: settings dialog failed: {}", e);
         }
     }
 }

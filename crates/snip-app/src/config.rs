@@ -122,6 +122,17 @@ pub fn config_file_path() -> Result<PathBuf, SnipError> {
     Ok(dir.join(CONFIG_FILE_NAME))
 }
 
+/// Saves the given configuration to `%APPDATA%/xdr-snip/config.toml`.
+///
+/// Overwrites the existing file. Used by the settings dialog to persist changes.
+pub fn save_config(config: &Config) -> Result<(), SnipError> {
+    let path = config_file_path()?;
+    debug!("save_config: writing to {}", path.display());
+    write_default_config(&path, config)?;
+    info!("save_config: config saved successfully");
+    Ok(())
+}
+
 // ======================== INTERNAL HELPERS ========================
 
 /// Resolves the config directory (`%APPDATA%/xdr-snip`), creating it if needed.

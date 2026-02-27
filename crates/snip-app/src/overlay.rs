@@ -24,11 +24,12 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Input::KeyboardAndMouse::{SetCapture, VK_ESCAPE};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
-    GetSystemMetrics, LoadCursorW, PostQuitMessage, RegisterClassW, SetCursor, SetWindowPos,
-    ShowWindow, TranslateMessage, CS_HREDRAW, CS_VREDRAW, HWND_TOPMOST, IDC_CROSS, MSG,
-    SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SWP_NOMOVE,
-    SWP_NOSIZE, SW_SHOW, WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP,
-    WM_MOUSEMOVE, WM_PAINT, WM_RBUTTONDOWN, WM_SETCURSOR, WNDCLASSW, WS_EX_TOPMOST, WS_POPUP,
+    GetSystemMetrics, LoadCursorW, PostQuitMessage, RegisterClassW, SetCursor,
+    SetForegroundWindow, SetWindowPos, ShowWindow, TranslateMessage, CS_HREDRAW, CS_VREDRAW,
+    HWND_TOPMOST, IDC_CROSS, MSG, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
+    SM_YVIRTUALSCREEN, SWP_NOMOVE, SWP_NOSIZE, SW_SHOW, WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN,
+    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_PAINT, WM_RBUTTONDOWN, WM_SETCURSOR,
+    WNDCLASSW, WS_EX_TOPMOST, WS_POPUP,
 };
 
 // ======================== THREAD-LOCAL STATE ========================
@@ -133,6 +134,10 @@ pub fn select_region() -> Result<Option<(Region, u32)>, SnipError> {
             SWP_NOMOVE | SWP_NOSIZE,
         )
     };
+
+    // Give the overlay keyboard focus so Escape works.
+    // WS_POPUP windows don't automatically receive focus.
+    let _ = unsafe { SetForegroundWindow(hwnd) };
 
     // Run the message loop until the overlay is closed
     run_message_loop();

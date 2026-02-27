@@ -114,6 +114,14 @@ pub fn generate_filename(pattern: &str) -> String {
     result
 }
 
+/// Returns the path to the config file (`%APPDATA%/xdr-snip/config.toml`).
+///
+/// Used by the tray "Settings" menu item to open the file in the default editor.
+pub fn config_file_path() -> Result<PathBuf, SnipError> {
+    let dir = resolve_config_dir()?;
+    Ok(dir.join(CONFIG_FILE_NAME))
+}
+
 // ======================== INTERNAL HELPERS ========================
 
 /// Resolves the config directory (`%APPDATA%/xdr-snip`), creating it if needed.

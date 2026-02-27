@@ -86,7 +86,7 @@ fn run() -> Result<(), SnipError> {
     }
 
     // Create the system tray icon + menu
-    let (_tray, id_screenshot, id_open_folder, id_quit) = tray::create_tray()?;
+    let (_tray, tray_ids) = tray::create_tray()?;
 
     // Register the global hotkey
     let (_hk_manager, hotkey_handle) = hotkey::register_hotkey(&cfg.hotkey)?;
@@ -125,15 +125,21 @@ fn run() -> Result<(), SnipError> {
             let clicked_id: String = event.id().0.clone();
             debug!("main: menu event id={}", clicked_id);
 
-            if clicked_id == id_screenshot {
+            if clicked_id == tray_ids.screenshot {
                 debug!("main: menu -> Take Screenshot");
                 handle_capture(&cfg, &save_dir);
                 // Drain stale hotkey events here too
                 while hotkey_rx.try_recv().is_ok() {}
-            } else if clicked_id == id_open_folder {
+            } else if clicked_id == tray_ids.open_folder {
                 debug!("main: menu -> Open Folder");
                 open_folder(&save_dir);
-            } else if clicked_id == id_quit {
+            } else if clicked_id == tray_ids.settings {
+                debug!("main: menu -> Settings");
+                open_config_file();
+            } else if clicked_id == tray_ids.open_log {
+                debug!("main: menu -> Open Log");
+                open_log_file();
+            } else if clicked_id == tray_ids.quit {
                 info!("main: menu -> Quit");
                 break;
             }
@@ -280,14 +286,49 @@ fn drain_win32_messages() {
 /// Opens a folder in Windows Explorer via ShellExecuteW.
 fn open_folder(path: &PathBuf) {
     debug!("open_folder: opening {}", path.display());
+    shell_open(&path.to_string_lossy());
+    info!("open_folder: dispatched for {}", path.display());
+}
 
+/// Opens the config file (`%APPDATA%/xdr-snip/config.toml`) in the default editor.
+fn open_config_file() {
+    match config::config_file_path() {
+        Ok(path) => {
+            debug!("open_config_file: opening {}", path.display());
+            shell_open(&path.to_string_lossy());
+            info!("open_config_file: dispatched for {}", path.display());
+        }
+        Err(e) => {
+            warn!("open_config_file: failed to resolve config path: {}", e);
+        }
+    }
+}
+
+/// Opens the log file (`%APPDATA%/xdr-snip/xdr-snip.log`) in the default editor.
+fn open_log_file() {
+    let log_path = dirs::config_dir()
+        .map(|d| d.join("xdr-snip").join("xdr-snip.log"))
+        .unwrap_or_default();
+
+    if log_path.exists() {
+        debug!("open_log_file: opening {}", log_path.display());
+        shell_open(&log_path.to_string_lossy());
+        info!("open_log_file: dispatched for {}", log_path.display());
+    } else {
+        warn!("open_log_file: log file not found at {}", log_path.display());
+    }
+}
+
+/// Opens a path via `ShellExecuteW` with the "open" verb.
+///
+/// Works for files (opens in default app) and directories (opens in Explorer).
+fn shell_open(path: &str) {
     let path_wide: Vec<u16> = path
-        .to_string_lossy()
         .encode_utf16()
         .chain(std::iter::once(0))
         .collect();
 
-    // SAFETY: ShellExecuteW with "open" verb and a directory path is safe.
+    // SAFETY: ShellExecuteW with "open" verb is safe.
     // The path_wide Vec lives until after the call returns.
     unsafe {
         ShellExecuteW(
@@ -299,9 +340,4 @@ fn open_folder(path: &PathBuf) {
             SW_SHOWNORMAL,
         );
     }
-
-    info!(
-        "open_folder: ShellExecuteW dispatched for {}",
-        path.display()
-    );
 }

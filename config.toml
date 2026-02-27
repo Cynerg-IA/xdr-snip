@@ -1,0 +1,13 @@
+[capture]
+quality = 85
+save_dir = "~/Pictures/Screenshots"
+filename_pattern = "screenshot_{timestamp}"
+
+[hotkey]
+key = "PrintScreen"
+modifiers = []
+
+[behavior]
+copy_to_clipboard = true
+save_to_file = true
+show_notification = true

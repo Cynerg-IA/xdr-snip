@@ -1,0 +1,3 @@
+[workspace]
+members = ["crates/snip-app", "crates/snip-types"]
+resolver = "2"

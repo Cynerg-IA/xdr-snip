@@ -107,6 +107,16 @@ fn run() -> Result<(), SnipError> {
             if event.id() == target_hotkey_id {
                 debug!("main: hotkey triggered");
                 handle_capture(&cfg, &save_dir);
+                // Drain any hotkey events that queued while the overlay was
+                // pumping Win32 messages — prevents the overlay from re-opening
+                // immediately after a capture.
+                let mut drained = 0u32;
+                while hotkey_rx.try_recv().is_ok() {
+                    drained += 1;
+                }
+                if drained > 0 {
+                    debug!("main: drained {} stale hotkey events", drained);
+                }
             }
         }
 
@@ -118,6 +128,8 @@ fn run() -> Result<(), SnipError> {
             if clicked_id == id_screenshot {
                 debug!("main: menu -> Take Screenshot");
                 handle_capture(&cfg, &save_dir);
+                // Drain stale hotkey events here too
+                while hotkey_rx.try_recv().is_ok() {}
             } else if clicked_id == id_open_folder {
                 debug!("main: menu -> Open Folder");
                 open_folder(&save_dir);
@@ -210,19 +222,48 @@ fn handle_capture(cfg: &snip_types::Config, save_dir: &PathBuf) {
 
 // ======================== HELPERS ========================
 
-/// Initializes the `tracing` subscriber with an env-filter.
+/// Initializes the `tracing` subscriber with file output.
 ///
-/// Default level: INFO.  Override with `RUST_LOG=debug` or `RUST_LOG=snip_app=trace`.
+/// Logs to `%APPDATA%/hdr-snip/hdr-snip.log` since this is a GUI app with no
+/// console. The log file is truncated on each launch.
+/// Override level with `RUST_LOG=debug` or `RUST_LOG=hdr_snip=trace`.
 fn init_tracing() {
+    use std::fs::OpenOptions;
+    use std::sync::Mutex;
     use tracing_subscriber::EnvFilter;
 
     let filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_target(true)
-        .init();
+    // Write logs to file — GUI app has no console
+    let log_dir = dirs::config_dir()
+        .map(|d| d.join("hdr-snip"))
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let _ = std::fs::create_dir_all(&log_dir);
+
+    let log_path = log_dir.join("hdr-snip.log");
+    match OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&log_path)
+    {
+        Ok(file) => {
+            tracing_subscriber::fmt()
+                .with_env_filter(filter)
+                .with_target(true)
+                .with_writer(Mutex::new(file))
+                .with_ansi(false)
+                .init();
+        }
+        Err(_) => {
+            // Fallback to stderr if log file can't be created
+            tracing_subscriber::fmt()
+                .with_env_filter(filter)
+                .with_target(true)
+                .init();
+        }
+    }
 }
 
 /// Drains all pending Win32 messages without blocking.

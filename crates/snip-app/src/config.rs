@@ -1,7 +1,8 @@
-//! Configuration loading and path utilities.
+//! Configuration loading, legacy migration, and path utilities.
 //!
 //! Reads `config.toml` from `%APPDATA%/xdr-snip/`, creating it with defaults
-//! if the file or directory does not yet exist.
+//! if the file or directory does not yet exist. Detects legacy config files
+//! (pre-v0.4 with bare `quality` field) and migrates them to the new format.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -19,6 +20,9 @@ const CONFIG_FILE_NAME: &str = "config.toml";
 /// Loads the application configuration from `%APPDATA%/xdr-snip/config.toml`.
 ///
 /// If the file does not exist, a default config is written to disk and returned.
+/// Detects legacy configs (bare `quality` field under `[capture]`) and migrates
+/// them to the new format-options structure.
+///
 /// Returns [`SnipError::Config`] if the file exists but cannot be parsed.
 pub fn load_config() -> Result<Config, SnipError> {
     debug!("load_config: resolving config path");
@@ -34,7 +38,7 @@ pub fn load_config() -> Result<Config, SnipError> {
             config_path.display()
         );
         let default = Config::default();
-        write_default_config(&config_path, &default)?;
+        write_config(&config_path, &default)?;
         return Ok(default);
     }
 
@@ -51,7 +55,11 @@ pub fn load_config() -> Result<Config, SnipError> {
         raw.len()
     );
 
-    let config: Config = toml::from_str(&raw).map_err(|e| {
+    // Check for legacy config before parsing into the new struct
+    let migrated = migrate_legacy_config(&raw);
+    let parse_str = migrated.as_deref().unwrap_or(&raw);
+
+    let config: Config = toml::from_str(parse_str).map_err(|e| {
         SnipError::Config(format!(
             "failed to parse {}: {}",
             config_path.display(),
@@ -59,20 +67,92 @@ pub fn load_config() -> Result<Config, SnipError> {
         ))
     })?;
 
-    // Validate quality range (50-100; below 50 = visible artifacts)
-    if config.capture.quality < 50 || config.capture.quality > 100 {
-        warn!(
-            "load_config: quality {} out of 50-100 range, clamping",
-            config.capture.quality
-        );
+    // If we migrated, re-save in the new format
+    if migrated.is_some() {
+        info!("load_config: legacy config migrated, re-saving in new format");
+        if let Err(e) = write_config(&config_path, &config) {
+            warn!("load_config: failed to re-save migrated config: {}", e);
+            // Non-fatal — config was parsed successfully
+        }
     }
 
     info!(
-        "load_config: loaded config — quality={}, save_dir={}, hotkey={}",
-        config.capture.quality, config.capture.save_dir, config.hotkey.key
+        "load_config: loaded config — format={}, save_dir={}, hotkey={}",
+        config.capture.format, config.capture.save_dir, config.hotkey.key
     );
 
     Ok(config)
+}
+
+/// Detects and migrates a pre-v0.4 legacy config.
+///
+/// Legacy configs have a bare `quality = N` under `[capture]` but no `format`
+/// or `format_options` fields. This function:
+/// 1. Parses as raw TOML table to check for the legacy field.
+/// 2. Reads the old quality value.
+/// 3. Removes the bare `quality` key.
+/// 4. Adds `format = "jpeg"` and `format_options.jpeg.quality = N`.
+///
+/// Returns `Some(new_toml_string)` if migration was needed, `None` otherwise.
+fn migrate_legacy_config(raw: &str) -> Option<String> {
+    let table: toml::Value = toml::from_str(raw).ok()?;
+    let capture = table.get("capture")?.as_table()?;
+
+    // Legacy indicator: has bare `quality` but no `format` field
+    let has_bare_quality = capture.contains_key("quality");
+    let has_format = capture.contains_key("format");
+
+    if !has_bare_quality || has_format {
+        debug!("migrate_legacy_config: no migration needed (bare_quality={}, has_format={})",
+            has_bare_quality, has_format);
+        return None;
+    }
+
+    let old_quality = capture.get("quality")?.as_integer()? as u32;
+    info!(
+        "migrate_legacy_config: detected legacy config with quality={}, migrating",
+        old_quality
+    );
+
+    // Build the new config from the parsed table, overriding capture section
+    let mut new_table = table.as_table()?.clone();
+    let new_capture = new_table.get_mut("capture")?.as_table_mut()?;
+
+    // Remove the bare quality field
+    new_capture.remove("quality");
+
+    // Add format = "jpeg"
+    new_capture.insert(
+        "format".to_string(),
+        toml::Value::String("jpeg".to_string()),
+    );
+
+    // Add format_options with the migrated quality
+    let mut jpeg_opts = toml::map::Map::new();
+    jpeg_opts.insert(
+        "quality".to_string(),
+        toml::Value::Integer(old_quality as i64),
+    );
+    jpeg_opts.insert(
+        "chroma_subsampling".to_string(),
+        toml::Value::String("4:2:2".to_string()),
+    );
+
+    let mut format_options = toml::map::Map::new();
+    format_options.insert("jpeg".to_string(), toml::Value::Table(jpeg_opts));
+
+    new_capture.insert(
+        "format_options".to_string(),
+        toml::Value::Table(format_options),
+    );
+
+    let migrated = toml::to_string_pretty(&toml::Value::Table(new_table)).ok()?;
+    debug!(
+        "migrate_legacy_config: migration complete — quality {} → format_options.jpeg.quality",
+        old_quality
+    );
+
+    Some(migrated)
 }
 
 /// Expands a leading `~` in a path string to the user's home directory.
@@ -128,7 +208,7 @@ pub fn config_file_path() -> Result<PathBuf, SnipError> {
 pub fn save_config(config: &Config) -> Result<(), SnipError> {
     let path = config_file_path()?;
     debug!("save_config: writing to {}", path.display());
-    write_default_config(&path, config)?;
+    write_config(&path, config)?;
     info!("save_config: config saved successfully");
     Ok(())
 }
@@ -160,22 +240,22 @@ fn resolve_config_dir() -> Result<PathBuf, SnipError> {
     Ok(dir)
 }
 
-/// Serializes the default config to TOML and writes it to `path`.
-fn write_default_config(path: &Path, config: &Config) -> Result<(), SnipError> {
+/// Serializes config to TOML and writes it to `path`.
+fn write_config(path: &Path, config: &Config) -> Result<(), SnipError> {
     let toml_str = toml::to_string_pretty(config).map_err(|e| {
-        SnipError::Config(format!("failed to serialize default config: {}", e))
+        SnipError::Config(format!("failed to serialize config: {}", e))
     })?;
 
     fs::write(path, &toml_str).map_err(|e| {
         SnipError::Config(format!(
-            "failed to write default config to {}: {}",
+            "failed to write config to {}: {}",
             path.display(),
             e
         ))
     })?;
 
     info!(
-        "write_default_config: wrote {} bytes to {}",
+        "write_config: wrote {} bytes to {}",
         toml_str.len(),
         path.display()
     );
@@ -186,6 +266,7 @@ fn write_default_config(path: &Path, config: &Config) -> Result<(), SnipError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use snip_types::OutputFormat;
 
     #[test]
     fn expand_tilde_no_tilde() {
@@ -207,5 +288,56 @@ mod tests {
         assert!(!name.contains("{timestamp}"));
         assert!(name.starts_with("shot_"));
         assert!(name.ends_with("_end"));
+    }
+
+    #[test]
+    fn migrate_legacy_config_detects_bare_quality() {
+        let legacy = r#"
+[capture]
+quality = 92
+save_dir = "~/Pictures/XDR-Snips"
+filename_pattern = "screenshot_{timestamp}"
+
+[hotkey]
+key = "PrintScreen"
+modifiers = []
+
+[behavior]
+copy_to_clipboard = true
+save_to_file = true
+show_notification = true
+"#;
+        let migrated = migrate_legacy_config(legacy);
+        assert!(migrated.is_some(), "should detect legacy config");
+
+        let new_toml = migrated.unwrap();
+        // New format field should be present
+        assert!(new_toml.contains("format = \"jpeg\""), "format field should be added");
+        // Quality should be under format_options.jpeg section
+        assert!(new_toml.contains("[capture.format_options.jpeg]"), "jpeg options section should exist");
+
+        // Parse and verify the migration produced correct values
+        let cfg: Config = toml::from_str(&new_toml).expect("migrated config should parse");
+        assert_eq!(cfg.capture.format, OutputFormat::Jpeg);
+        assert_eq!(cfg.capture.format_options.jpeg.quality, 92);
+        // Verify bare quality is not in the capture section (it's under format_options.jpeg)
+        let reparsed: toml::Value = toml::from_str(&new_toml).unwrap();
+        let capture = reparsed.get("capture").unwrap().as_table().unwrap();
+        assert!(!capture.contains_key("quality"), "bare quality should be removed from [capture]");
+    }
+
+    #[test]
+    fn migrate_legacy_config_skips_new_format() {
+        let new_config = r#"
+[capture]
+format = "png"
+save_dir = "~/Pictures/XDR-Snips"
+
+[capture.format_options.png]
+compression = 6
+filter = "adaptive"
+"#;
+        let migrated = migrate_legacy_config(new_config);
+        assert!(migrated.is_none(), "should not migrate new-format config");
     }
 }

@@ -7,12 +7,414 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+// ======================== OUTPUT FORMAT ========================
+
+/// Supported output image formats.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OutputFormat {
+    Jpeg,
+    Png,
+    #[serde(rename = "webp")]
+    WebP,
+    Avif,
+    Tiff,
+    Bmp,
+    Qoi,
+    #[serde(rename = "openexr")]
+    OpenExr,
+}
+
+impl OutputFormat {
+    /// File extension for this format (without leading dot).
+    pub fn extension(&self) -> &'static str {
+        match self {
+            Self::Jpeg => "jpg",
+            Self::Png => "png",
+            Self::WebP => "webp",
+            Self::Avif => "avif",
+            Self::Tiff => "tiff",
+            Self::Bmp => "bmp",
+            Self::Qoi => "qoi",
+            Self::OpenExr => "exr",
+        }
+    }
+
+    /// Human-readable display name for UI dropdowns.
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::Jpeg => "JPEG",
+            Self::Png => "PNG",
+            Self::WebP => "WebP",
+            Self::Avif => "AVIF",
+            Self::Tiff => "TIFF",
+            Self::Bmp => "BMP",
+            Self::Qoi => "QOI",
+            Self::OpenExr => "OpenEXR (HDR)",
+        }
+    }
+
+    /// All supported formats, in display order.
+    pub const ALL: &'static [OutputFormat] = &[
+        Self::Jpeg,
+        Self::Png,
+        Self::WebP,
+        Self::Avif,
+        Self::Tiff,
+        Self::Bmp,
+        Self::Qoi,
+        Self::OpenExr,
+    ];
+
+    /// Whether this format preserves HDR data (no tone mapping needed).
+    pub fn preserves_hdr(&self) -> bool {
+        matches!(self, Self::OpenExr)
+    }
+}
+
+impl Default for OutputFormat {
+    fn default() -> Self {
+        Self::Jpeg
+    }
+}
+
+impl fmt::Display for OutputFormat {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.display_name())
+    }
+}
+
+// ======================== PER-FORMAT OPTIONS ========================
+
+/// JPEG-specific encoding options.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JpegOptions {
+    /// Quality level (50-100). Higher = larger, sharper.
+    #[serde(default = "default_jpeg_quality")]
+    pub quality: u32,
+
+    /// Chroma subsampling mode.
+    #[serde(default)]
+    pub chroma_subsampling: ChromaSubsampling,
+}
+
+impl Default for JpegOptions {
+    fn default() -> Self {
+        Self {
+            quality: default_jpeg_quality(),
+            chroma_subsampling: ChromaSubsampling::default(),
+        }
+    }
+}
+
+/// Chroma subsampling modes for JPEG encoding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ChromaSubsampling {
+    /// 4:4:4 — no subsampling, best quality, largest files.
+    #[serde(rename = "4:4:4")]
+    Full,
+    /// 4:2:2 — horizontal subsampling (default, good balance).
+    #[serde(rename = "4:2:2")]
+    Half,
+    /// 4:2:0 — horizontal + vertical subsampling, smallest files.
+    #[serde(rename = "4:2:0")]
+    Quarter,
+}
+
+impl Default for ChromaSubsampling {
+    fn default() -> Self {
+        Self::Half
+    }
+}
+
+impl ChromaSubsampling {
+    /// Human-readable label for the settings UI.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Full => "4:4:4 \u{2014} best quality",
+            Self::Half => "4:2:2 \u{2014} balanced",
+            Self::Quarter => "4:2:0 \u{2014} smallest",
+        }
+    }
+
+    /// All subsampling options in display order.
+    pub const ALL: &'static [ChromaSubsampling] = &[Self::Full, Self::Half, Self::Quarter];
+}
+
+/// PNG-specific encoding options.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PngOptions {
+    /// Compression level: 0 = fast, 6 = default, 9 = max.
+    #[serde(default = "default_png_compression")]
+    pub compression: u8,
+
+    /// Filter strategy applied before compression.
+    #[serde(default)]
+    pub filter: PngFilter,
+}
+
+impl Default for PngOptions {
+    fn default() -> Self {
+        Self {
+            compression: default_png_compression(),
+            filter: PngFilter::default(),
+        }
+    }
+}
+
+/// PNG pre-compression filter strategies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PngFilter {
+    Adaptive,
+    None,
+    Sub,
+    Up,
+    Average,
+    Paeth,
+}
+
+impl Default for PngFilter {
+    fn default() -> Self {
+        Self::Adaptive
+    }
+}
+
+impl PngFilter {
+    /// Human-readable label for the settings UI.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Adaptive => "Adaptive (auto)",
+            Self::None => "None",
+            Self::Sub => "Sub",
+            Self::Up => "Up",
+            Self::Average => "Average",
+            Self::Paeth => "Paeth",
+        }
+    }
+
+    /// All filter options in display order.
+    pub const ALL: &'static [PngFilter] = &[
+        Self::Adaptive,
+        Self::None,
+        Self::Sub,
+        Self::Up,
+        Self::Average,
+        Self::Paeth,
+    ];
+}
+
+/// WebP-specific encoding options.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebPOptions {
+    /// Lossy vs lossless mode.
+    #[serde(default)]
+    pub lossless: bool,
+
+    /// Quality (0-100). Only used in lossy mode.
+    #[serde(default = "default_webp_quality")]
+    pub quality: f32,
+}
+
+impl Default for WebPOptions {
+    fn default() -> Self {
+        Self {
+            lossless: false,
+            quality: default_webp_quality(),
+        }
+    }
+}
+
+/// AVIF-specific encoding options.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AvifOptions {
+    /// Quality (1-100). Higher = better quality, larger.
+    #[serde(default = "default_avif_quality")]
+    pub quality: u8,
+
+    /// Speed (1-10). Lower = slower but better compression.
+    #[serde(default = "default_avif_speed")]
+    pub speed: u8,
+}
+
+impl Default for AvifOptions {
+    fn default() -> Self {
+        Self {
+            quality: default_avif_quality(),
+            speed: default_avif_speed(),
+        }
+    }
+}
+
+/// TIFF compression options.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TiffCompression {
+    None,
+    Lzw,
+    Deflate,
+    Packbits,
+}
+
+impl Default for TiffCompression {
+    fn default() -> Self {
+        Self::Lzw
+    }
+}
+
+impl TiffCompression {
+    /// Human-readable label for the settings UI.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::None => "None (uncompressed)",
+            Self::Lzw => "LZW (default)",
+            Self::Deflate => "Deflate/Zip",
+            Self::Packbits => "PackBits",
+        }
+    }
+
+    /// All compression options in display order.
+    pub const ALL: &'static [TiffCompression] = &[
+        Self::None,
+        Self::Lzw,
+        Self::Deflate,
+        Self::Packbits,
+    ];
+}
+
+/// TIFF-specific encoding options wrapper.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TiffOptions {
+    /// Compression algorithm.
+    #[serde(default)]
+    pub compression: TiffCompression,
+}
+
+impl Default for TiffOptions {
+    fn default() -> Self {
+        Self {
+            compression: TiffCompression::default(),
+        }
+    }
+}
+
+/// OpenEXR compression options.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ExrCompression {
+    Uncompressed,
+    Rle,
+    Zip1,
+    Zip16,
+    Piz,
+    Pxr24,
+    B44,
+    #[serde(rename = "b44a")]
+    B44A,
+}
+
+impl Default for ExrCompression {
+    fn default() -> Self {
+        Self::Zip16
+    }
+}
+
+impl ExrCompression {
+    /// Human-readable label for the settings UI.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Uncompressed => "Uncompressed",
+            Self::Rle => "RLE",
+            Self::Zip1 => "ZIP (scanline)",
+            Self::Zip16 => "ZIP16 (default)",
+            Self::Piz => "PIZ (wavelet)",
+            Self::Pxr24 => "PXR24 (lossy 24-bit)",
+            Self::B44 => "B44 (lossy fixed-rate)",
+            Self::B44A => "B44A (lossy adaptive)",
+        }
+    }
+
+    /// All compression options in display order.
+    pub const ALL: &'static [ExrCompression] = &[
+        Self::Uncompressed,
+        Self::Rle,
+        Self::Zip1,
+        Self::Zip16,
+        Self::Piz,
+        Self::Pxr24,
+        Self::B44,
+        Self::B44A,
+    ];
+}
+
+/// OpenEXR-specific encoding options wrapper.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExrOptions {
+    /// Compression algorithm.
+    #[serde(default)]
+    pub compression: ExrCompression,
+}
+
+impl Default for ExrOptions {
+    fn default() -> Self {
+        Self {
+            compression: ExrCompression::default(),
+        }
+    }
+}
+
+/// All format-specific options, bundled together.
+/// Every format's options are always present (with defaults) even when a
+/// different format is selected — this preserves user choices when switching
+/// formats in the settings dialog.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FormatOptions {
+    #[serde(default)]
+    pub jpeg: JpegOptions,
+    #[serde(default)]
+    pub png: PngOptions,
+    #[serde(default)]
+    pub webp: WebPOptions,
+    #[serde(default)]
+    pub avif: AvifOptions,
+    #[serde(default)]
+    pub tiff: TiffOptions,
+    #[serde(default)]
+    pub exr: ExrOptions,
+}
+
+impl Default for FormatOptions {
+    fn default() -> Self {
+        Self {
+            jpeg: JpegOptions::default(),
+            png: PngOptions::default(),
+            webp: WebPOptions::default(),
+            avif: AvifOptions::default(),
+            tiff: TiffOptions::default(),
+            exr: ExrOptions::default(),
+        }
+    }
+}
+
+// ======================== HDR PIXEL DATA ========================
+
+/// Raw HDR pixel data for formats that preserve HDR (OpenEXR).
+/// Carries the `R16G16B16A16Float` bytes before tone mapping.
+pub struct HdrPixelData {
+    /// Raw pixel bytes: 8 bytes per pixel (4 × f16: R, G, B, A).
+    pub pixels: Vec<u8>,
+    /// Image width in pixels.
+    pub width: u32,
+    /// Image height in pixels.
+    pub height: u32,
+}
+
 // ======================== CONFIGURATION ========================
 
 /// Top-level application configuration loaded from `config.toml`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
-    /// Settings related to screenshot capture (quality, output path, naming).
+    /// Settings related to screenshot capture (format, quality, output path, naming).
     #[serde(default)]
     pub capture: CaptureConfig,
 
@@ -35,12 +437,16 @@ impl Default for Config {
     }
 }
 
-/// Capture-related settings: JPEG quality, output directory, filename template.
+/// Capture-related settings: output format, encoding options, directory, naming.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CaptureConfig {
-    /// JPEG quality level (50-100). Higher values produce larger, sharper files.
-    #[serde(default = "default_quality")]
-    pub quality: u32,
+    /// Output image format.
+    #[serde(default)]
+    pub format: OutputFormat,
+
+    /// Per-format encoding options (all formats stored, active one used).
+    #[serde(default)]
+    pub format_options: FormatOptions,
 
     /// Directory where screenshots are saved. Supports `~` for home directory.
     #[serde(default = "default_save_dir")]
@@ -54,7 +460,8 @@ pub struct CaptureConfig {
 impl Default for CaptureConfig {
     fn default() -> Self {
         Self {
-            quality: default_quality(),
+            format: OutputFormat::default(),
+            format_options: FormatOptions::default(),
             save_dir: default_save_dir(),
             filename_pattern: default_filename_pattern(),
         }
@@ -111,8 +518,28 @@ impl Default for BehaviorConfig {
 // ======================== SERDE DEFAULTS ========================
 
 /// Default JPEG quality: 85 is a good balance of size and sharpness.
-fn default_quality() -> u32 {
+fn default_jpeg_quality() -> u32 {
     85
+}
+
+/// Default PNG compression: 6 (the libpng default).
+fn default_png_compression() -> u8 {
+    6
+}
+
+/// Default WebP lossy quality.
+fn default_webp_quality() -> f32 {
+    80.0
+}
+
+/// Default AVIF quality.
+fn default_avif_quality() -> u8 {
+    80
+}
+
+/// Default AVIF speed (1=slowest/best, 10=fastest/worst).
+fn default_avif_speed() -> u8 {
+    4
 }
 
 /// Default save directory — `~/Pictures/XDR-Snips` for clean separation from
@@ -195,6 +622,8 @@ pub enum SnipError {
     Io(#[from] std::io::Error),
 }
 
+// ======================== TESTS ========================
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -202,7 +631,8 @@ mod tests {
     #[test]
     fn default_config_is_valid() {
         let cfg = Config::default();
-        assert_eq!(cfg.capture.quality, 85);
+        assert_eq!(cfg.capture.format, OutputFormat::Jpeg);
+        assert_eq!(cfg.capture.format_options.jpeg.quality, 85);
         assert!(cfg.behavior.copy_to_clipboard);
         assert!(cfg.behavior.save_to_file);
         assert!(cfg.behavior.show_notification);
@@ -219,5 +649,51 @@ mod tests {
             h: 600,
         };
         assert_eq!(r.to_string(), "800x600+100+200");
+    }
+
+    #[test]
+    fn output_format_extensions() {
+        assert_eq!(OutputFormat::Jpeg.extension(), "jpg");
+        assert_eq!(OutputFormat::Png.extension(), "png");
+        assert_eq!(OutputFormat::WebP.extension(), "webp");
+        assert_eq!(OutputFormat::OpenExr.extension(), "exr");
+    }
+
+    #[test]
+    fn output_format_hdr_preservation() {
+        assert!(!OutputFormat::Jpeg.preserves_hdr());
+        assert!(!OutputFormat::Png.preserves_hdr());
+        assert!(OutputFormat::OpenExr.preserves_hdr());
+    }
+
+    #[test]
+    fn format_options_roundtrip_toml() {
+        let cfg = Config::default();
+        let serialized = toml::to_string(&cfg).expect("serialize");
+        let deserialized: Config = toml::from_str(&serialized).expect("deserialize");
+        assert_eq!(deserialized.capture.format, OutputFormat::Jpeg);
+        assert_eq!(deserialized.capture.format_options.jpeg.quality, 85);
+    }
+
+    #[test]
+    fn legacy_config_loads_with_defaults() {
+        // A legacy config with bare quality field — new format fields get defaults
+        let legacy = r#"
+[capture]
+save_dir = "~/Pictures/XDR-Snips"
+filename_pattern = "screenshot_{timestamp}"
+
+[hotkey]
+key = "PrintScreen"
+modifiers = []
+
+[behavior]
+copy_to_clipboard = true
+save_to_file = true
+show_notification = true
+"#;
+        let cfg: Config = toml::from_str(legacy).expect("should parse legacy config");
+        assert_eq!(cfg.capture.format, OutputFormat::Jpeg);
+        assert_eq!(cfg.capture.format_options.jpeg.quality, 85);
     }
 }

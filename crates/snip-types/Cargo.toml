@@ -7,3 +7,6 @@ description = "Shared types and error definitions for XDR Snip"
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
+
+[dev-dependencies]
+toml = "0.8"

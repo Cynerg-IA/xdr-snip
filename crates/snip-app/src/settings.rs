@@ -2,15 +2,23 @@
 //!
 //! Shows a dialog with:
 //! - Save path text field + Browse button
-//! - JPEG quality slider (50–100) with live size estimate label
+//! - Output format dropdown (JPEG, PNG, WebP, AVIF, TIFF, BMP, QOI, OpenEXR)
+//! - Per-format options (quality sliders, compression combos, etc.)
 //! - Save / Cancel buttons
+//!
+//! Per-format option controls are created at WM_CREATE and shown/hidden
+//! dynamically based on the selected format via `CBN_SELCHANGE`.
 //!
 //! On Save, writes the updated config to disk and returns the new values
 //! so the main loop can hot-reload them.
 
 use std::ptr;
 
-use snip_types::{Config, SnipError};
+use snip_types::{
+    AvifOptions, ChromaSubsampling, Config, ExrCompression, FormatOptions, JpegOptions,
+    OutputFormat, PngFilter, PngOptions, SnipError, TiffCompression, TiffOptions, WebPOptions,
+    ExrOptions,
+};
 use tracing::{debug, info, warn};
 use windows::core::w;
 use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
@@ -28,7 +36,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetMessageW, GetSystemMetrics, GetWindowLongW, GetWindowTextLengthW, GetWindowTextW,
     PostQuitMessage, RegisterClassW, SendMessageW, SetForegroundWindow, SetWindowLongW,
     SetWindowTextW, ShowWindow, TranslateMessage, GWL_STYLE, HMENU, MSG, SM_CXSCREEN,
-    SM_CYSCREEN, SW_SHOW, WINDOW_EX_STYLE, WM_CLOSE, WM_COMMAND, WM_CREATE,
+    SM_CYSCREEN, SW_HIDE, SW_SHOW, WINDOW_EX_STYLE, WM_CLOSE, WM_COMMAND, WM_CREATE,
     WM_CTLCOLORSTATIC, WM_DESTROY, WM_HSCROLL, WM_SETFONT, WNDCLASSW, WS_BORDER,
     WS_CAPTION, WS_CHILD, WS_OVERLAPPED, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
 };
@@ -49,6 +57,20 @@ const TBM_SETPOS: u32 = 0x0405;
 /// Trackbar message: set range. wParam=redraw, lParam=MAKELPARAM(min, max).
 const TBM_SETRANGE: u32 = 0x0406;
 
+// ======================== COMBO BOX MESSAGES ========================
+
+/// Combo box message: add a string item.
+const CB_ADDSTRING: u32 = 0x0143;
+
+/// Combo box message: set current selection (0-based index).
+const CB_SETCURSEL: u32 = 0x014E;
+
+/// Combo box message: get current selection index.
+const CB_GETCURSEL: u32 = 0x0147;
+
+/// Combo box notification: selection changed.
+const CBN_SELCHANGE: u32 = 1;
+
 // ======================== CONTROL IDS ========================
 
 /// Control ID for the save path edit box.
@@ -57,11 +79,8 @@ const ID_PATH_EDIT: i32 = 101;
 /// Control ID for the Browse button.
 const ID_BROWSE: i32 = 102;
 
-/// Control ID for the quality slider (trackbar).
-const ID_QUALITY_SLIDER: i32 = 103;
-
-/// Control ID for the quality + size estimate label (updated live by slider).
-const ID_SIZE_LABEL: i32 = 104;
+/// Control ID for the format combo box.
+const ID_FORMAT_COMBO: i32 = 107;
 
 /// Control ID for the Save button.
 const ID_SAVE: i32 = 105;
@@ -69,13 +88,50 @@ const ID_SAVE: i32 = 105;
 /// Control ID for the Cancel button.
 const ID_CANCEL: i32 = 106;
 
+// --- JPEG option controls ---
+const ID_JPEG_QUALITY_LABEL: i32 = 110;
+const ID_JPEG_QUALITY_SLIDER: i32 = 111;
+const ID_JPEG_QUALITY_VALUE: i32 = 112;
+const ID_JPEG_CHROMA_LABEL: i32 = 113;
+const ID_JPEG_CHROMA_COMBO: i32 = 114;
+
+// --- PNG option controls ---
+const ID_PNG_COMPRESS_LABEL: i32 = 120;
+const ID_PNG_COMPRESS_SLIDER: i32 = 121;
+const ID_PNG_COMPRESS_VALUE: i32 = 122;
+const ID_PNG_FILTER_LABEL: i32 = 123;
+const ID_PNG_FILTER_COMBO: i32 = 124;
+
+// --- WebP option controls ---
+const ID_WEBP_MODE_LABEL: i32 = 130;
+const ID_WEBP_MODE_COMBO: i32 = 131;
+const ID_WEBP_QUALITY_LABEL: i32 = 132;
+const ID_WEBP_QUALITY_SLIDER: i32 = 133;
+const ID_WEBP_QUALITY_VALUE: i32 = 134;
+
+// --- AVIF option controls ---
+const ID_AVIF_QUALITY_LABEL: i32 = 140;
+const ID_AVIF_QUALITY_SLIDER: i32 = 141;
+const ID_AVIF_QUALITY_VALUE: i32 = 142;
+const ID_AVIF_SPEED_LABEL: i32 = 143;
+const ID_AVIF_SPEED_SLIDER: i32 = 144;
+const ID_AVIF_SPEED_VALUE: i32 = 145;
+
+// --- TIFF option controls ---
+const ID_TIFF_COMPRESS_LABEL: i32 = 150;
+const ID_TIFF_COMPRESS_COMBO: i32 = 151;
+
+// --- EXR option controls ---
+const ID_EXR_COMPRESS_LABEL: i32 = 160;
+const ID_EXR_COMPRESS_COMBO: i32 = 161;
+
 // ======================== LAYOUT CONSTANTS ========================
 
 /// Dialog width in pixels.
-const DLG_W: i32 = 480;
+const DLG_W: i32 = 500;
 
 /// Dialog height in pixels (includes title bar + borders).
-const DLG_H: i32 = 290;
+const DLG_H: i32 = 480;
 
 /// Left/right margin for controls.
 const MARGIN: i32 = 20;
@@ -84,22 +140,22 @@ const MARGIN: i32 = 20;
 const CTRL_H: i32 = 26;
 
 /// Vertical spacing between sections.
-const SECTION_SPACE: i32 = 18;
+const SECTION_SPACE: i32 = 14;
 
 /// Vertical spacing between label and its control.
 const LABEL_GAP: i32 = 4;
 
 /// Minimum JPEG quality (below 50 = visible artifacts on text).
-const QUALITY_MIN: i32 = 50;
+const JPEG_QUALITY_MIN: i32 = 50;
 
 /// Maximum JPEG quality.
-const QUALITY_MAX: i32 = 100;
-
-/// Recommended JPEG quality — best compromise between size and sharpness.
-const QUALITY_RECOMMENDED: i32 = 85;
+const JPEG_QUALITY_MAX: i32 = 100;
 
 /// Background color for the dialog — matches Windows system dialog (BGR).
 const DIALOG_BG: u32 = 0x00F0F0F0;
+
+/// Y position where format-specific options start.
+const OPTIONS_Y_START: i32 = 148;
 
 // ======================== STATIC STATE ========================
 
@@ -224,8 +280,8 @@ pub fn open_settings(current: &Config) -> Result<Option<Config>, SnipError> {
 
 /// WNDPROC for the settings dialog.
 ///
-/// Creates child controls on WM_CREATE, handles button clicks and slider
-/// changes, reads values on Save.
+/// Creates child controls on WM_CREATE, handles button clicks, combo box
+/// changes, and slider events. Reads all values on Save.
 ///
 /// # Safety
 /// Called by Windows — must follow the WNDPROC contract.
@@ -244,6 +300,7 @@ unsafe extern "system" fn settings_wndproc(
 
         WM_COMMAND => {
             let id = (wparam.0 & 0xFFFF) as i32;
+            let notification = ((wparam.0 >> 16) & 0xFFFF) as u32;
 
             match id {
                 ID_BROWSE => {
@@ -254,37 +311,34 @@ unsafe extern "system" fn settings_wndproc(
                         }
                     }
                 }
+
+                ID_FORMAT_COMBO if notification == CBN_SELCHANGE => {
+                    debug!("settings_wndproc: format selection changed");
+                    if let Ok(combo) = GetDlgItem(Some(hwnd), ID_FORMAT_COMBO) {
+                        let idx = SendMessageW(combo, CB_GETCURSEL, None, None).0 as usize;
+                        if idx < OutputFormat::ALL.len() {
+                            let format = OutputFormat::ALL[idx];
+                            debug!("settings_wndproc: selected format: {}", format);
+                            show_format_options(hwnd, format);
+                        }
+                    }
+                }
+
+                ID_WEBP_MODE_COMBO if notification == CBN_SELCHANGE => {
+                    // Show/hide quality slider based on lossy vs lossless
+                    if let Ok(combo) = GetDlgItem(Some(hwnd), ID_WEBP_MODE_COMBO) {
+                        let idx = SendMessageW(combo, CB_GETCURSEL, None, None).0;
+                        let is_lossy = idx == 0;
+                        let show = if is_lossy { SW_SHOW } else { SW_HIDE };
+                        show_control(hwnd, ID_WEBP_QUALITY_LABEL, show);
+                        show_control(hwnd, ID_WEBP_QUALITY_SLIDER, show);
+                        show_control(hwnd, ID_WEBP_QUALITY_VALUE, show);
+                    }
+                }
+
                 ID_SAVE => {
                     info!("settings_wndproc: Save clicked");
-
-                    // Read values from controls
-                    let path_text = GetDlgItem(Some(hwnd), ID_PATH_EDIT)
-                        .map(|h| get_text(h))
-                        .unwrap_or_default();
-
-                    let quality = GetDlgItem(Some(hwnd), ID_QUALITY_SLIDER)
-                        .map(|h| {
-                            SendMessageW(h, TBM_GETPOS, None, None).0 as u32
-                        })
-                        .unwrap_or(85);
-
-                    info!(
-                        "settings_wndproc: save_dir='{}', quality={}",
-                        path_text, quality
-                    );
-
-                    // Take the config out, modify locally, put back.
-                    // Avoids creating &mut references to the static.
-                    let mut config = ptr::addr_of_mut!(EDIT_CONFIG).replace(None);
-                    if let Some(ref mut cfg) = config {
-                        cfg.capture.save_dir = path_text;
-                        cfg.capture.quality =
-                            quality.clamp(QUALITY_MIN as u32, QUALITY_MAX as u32);
-                    }
-                    ptr::addr_of_mut!(EDIT_CONFIG).write(config);
-
-                    info!("settings_wndproc: config updated, destroying dialog");
-                    SAVE_CLICKED = true;
+                    handle_save(hwnd);
                     let _ = DestroyWindow(hwnd);
                 }
                 ID_CANCEL => {
@@ -298,14 +352,8 @@ unsafe extern "system" fn settings_wndproc(
         }
 
         WM_HSCROLL => {
-            // Slider moved — update the quality + size label
-            if let (Ok(slider), Ok(label)) = (
-                GetDlgItem(Some(hwnd), ID_QUALITY_SLIDER),
-                GetDlgItem(Some(hwnd), ID_SIZE_LABEL),
-            ) {
-                let pos = SendMessageW(slider, TBM_GETPOS, None, None).0 as i32;
-                set_text(label, &quality_label(pos));
-            }
+            // Slider moved — update the corresponding value label
+            update_slider_labels(hwnd);
             LRESULT(0)
         }
 
@@ -343,9 +391,136 @@ unsafe extern "system" fn settings_wndproc(
     }
 }
 
+// ======================== SAVE HANDLER ========================
+
+/// Reads all control values and writes them back to the static config.
+unsafe fn handle_save(hwnd: HWND) {
+    // Read save directory
+    let path_text = GetDlgItem(Some(hwnd), ID_PATH_EDIT)
+        .map(|h| get_text(h))
+        .unwrap_or_default();
+
+    // Read selected format
+    let format_idx = GetDlgItem(Some(hwnd), ID_FORMAT_COMBO)
+        .map(|h| SendMessageW(h, CB_GETCURSEL, None, None).0 as usize)
+        .unwrap_or(0);
+    let format = if format_idx < OutputFormat::ALL.len() {
+        OutputFormat::ALL[format_idx]
+    } else {
+        OutputFormat::Jpeg
+    };
+
+    // Read JPEG options
+    let jpeg_quality = read_slider(hwnd, ID_JPEG_QUALITY_SLIDER, 85) as u32;
+    let jpeg_chroma_idx = read_combo(hwnd, ID_JPEG_CHROMA_COMBO, 1);
+    let chroma = if jpeg_chroma_idx < ChromaSubsampling::ALL.len() {
+        ChromaSubsampling::ALL[jpeg_chroma_idx]
+    } else {
+        ChromaSubsampling::Half
+    };
+
+    // Read PNG options
+    let png_compression = read_slider(hwnd, ID_PNG_COMPRESS_SLIDER, 6) as u8;
+    let png_filter_idx = read_combo(hwnd, ID_PNG_FILTER_COMBO, 0);
+    let png_filter = if png_filter_idx < PngFilter::ALL.len() {
+        PngFilter::ALL[png_filter_idx]
+    } else {
+        PngFilter::Adaptive
+    };
+
+    // Read WebP options
+    let webp_mode_idx = read_combo(hwnd, ID_WEBP_MODE_COMBO, 0);
+    let webp_lossless = webp_mode_idx == 1;
+    let webp_quality = read_slider(hwnd, ID_WEBP_QUALITY_SLIDER, 80) as f32;
+
+    // Read AVIF options
+    let avif_quality = read_slider(hwnd, ID_AVIF_QUALITY_SLIDER, 80) as u8;
+    let avif_speed = read_slider(hwnd, ID_AVIF_SPEED_SLIDER, 4) as u8;
+
+    // Read TIFF options
+    let tiff_idx = read_combo(hwnd, ID_TIFF_COMPRESS_COMBO, 1);
+    let tiff_compression = if tiff_idx < TiffCompression::ALL.len() {
+        TiffCompression::ALL[tiff_idx]
+    } else {
+        TiffCompression::Lzw
+    };
+
+    // Read EXR options
+    let exr_idx = read_combo(hwnd, ID_EXR_COMPRESS_COMBO, 3);
+    let exr_compression = if exr_idx < ExrCompression::ALL.len() {
+        ExrCompression::ALL[exr_idx]
+    } else {
+        ExrCompression::Zip16
+    };
+
+    info!(
+        "handle_save: format={}, save_dir='{}'",
+        format, path_text
+    );
+
+    // Take the config out, modify locally, put back.
+    // Avoids creating &mut references to the static.
+    let mut config = ptr::addr_of_mut!(EDIT_CONFIG).replace(None);
+    if let Some(ref mut cfg) = config {
+        cfg.capture.save_dir = path_text;
+        cfg.capture.format = format;
+        cfg.capture.format_options = FormatOptions {
+            jpeg: JpegOptions {
+                quality: jpeg_quality.clamp(JPEG_QUALITY_MIN as u32, JPEG_QUALITY_MAX as u32),
+                chroma_subsampling: chroma,
+            },
+            png: PngOptions {
+                compression: png_compression.clamp(0, 9),
+                filter: png_filter,
+            },
+            webp: WebPOptions {
+                lossless: webp_lossless,
+                quality: webp_quality.clamp(0.0, 100.0),
+            },
+            avif: AvifOptions {
+                quality: avif_quality.clamp(1, 100),
+                speed: avif_speed.clamp(1, 10),
+            },
+            tiff: TiffOptions {
+                compression: tiff_compression,
+            },
+            exr: ExrOptions {
+                compression: exr_compression,
+            },
+        };
+    }
+    ptr::addr_of_mut!(EDIT_CONFIG).write(config);
+
+    SAVE_CLICKED = true;
+    info!("handle_save: config updated");
+}
+
+/// Reads the current position of a slider control, or returns the default.
+unsafe fn read_slider(hwnd: HWND, id: i32, default: i32) -> i32 {
+    GetDlgItem(Some(hwnd), id)
+        .map(|h| SendMessageW(h, TBM_GETPOS, None, None).0 as i32)
+        .unwrap_or(default)
+}
+
+/// Reads the current selection index of a combo box, or returns the default.
+unsafe fn read_combo(hwnd: HWND, id: i32, default: usize) -> usize {
+    GetDlgItem(Some(hwnd), id)
+        .map(|h| {
+            let idx = SendMessageW(h, CB_GETCURSEL, None, None).0;
+            if idx < 0 { default } else { idx as usize }
+        })
+        .unwrap_or(default)
+}
+
 // ======================== CONTROL CREATION ========================
 
 /// Creates all child controls inside the settings dialog.
+///
+/// Layout:
+/// - Save folder row (path edit + Browse button)
+/// - Output format combo box
+/// - Per-format option rows (created for ALL formats, hidden by default)
+/// - Save / Cancel buttons at the bottom
 unsafe fn create_controls(hwnd: HWND) {
     let hinstance: HINSTANCE = GetModuleHandleW(None).unwrap_or_default().into();
     let font = GetStockObject(DEFAULT_GUI_FONT);
@@ -354,11 +529,19 @@ unsafe fn create_controls(hwnd: HWND) {
     // SAFETY: borrow via &* instead of read() — read() does a bitwise copy of
     // Option<Config> (which owns heap Strings), then drops the copy, freeing
     // the String data while EDIT_CONFIG still holds the same pointers → UAF.
-    let (save_dir, quality) = {
+    let (save_dir, format, opts) = {
         let cfg = &*ptr::addr_of!(EDIT_CONFIG);
         match cfg {
-            Some(c) => (c.capture.save_dir.clone(), c.capture.quality),
-            None => ("~/Pictures/XDR-Snips".to_string(), 85),
+            Some(c) => (
+                c.capture.save_dir.clone(),
+                c.capture.format,
+                c.capture.format_options.clone(),
+            ),
+            None => (
+                "~/Pictures/XDR-Snips".to_string(),
+                OutputFormat::Jpeg,
+                FormatOptions::default(),
+            ),
         }
     };
 
@@ -395,52 +578,72 @@ unsafe fn create_controls(hwnd: HWND) {
 
     y += CTRL_H + SECTION_SPACE;
 
-    // ─── Section 2: JPEG quality slider ───
-    let ql = create_child(
-        hwnd, hinstance, w!("STATIC"),
-        &format!("JPEG quality ({}\u{2013}{}):", QUALITY_MIN, QUALITY_MAX),
+    // ─── Section 2: Output format combo box ───
+    let fmt_lbl = create_child(
+        hwnd, hinstance, w!("STATIC"), "Output format:",
         MARGIN, y, inner_w, 20, 0,
     );
-    send_font(ql, font);
+    send_font(fmt_lbl, font);
 
     y += 20 + LABEL_GAP;
 
-    // Slider (trackbar)
-    let slider = create_child(
-        hwnd, hinstance, w!("msctls_trackbar32"), "",
-        MARGIN, y, inner_w, 34, ID_QUALITY_SLIDER,
+    let format_combo = create_child(
+        hwnd, hinstance, w!("COMBOBOX"), "",
+        MARGIN, y, inner_w, 200, ID_FORMAT_COMBO,
     );
+    // Add dropdown style — CBS_DROPDOWNLIST = 0x0003
+    let combo_style = GetWindowLongW(format_combo, GWL_STYLE);
+    SetWindowLongW(format_combo, GWL_STYLE, combo_style | 0x0003);
+    send_font(format_combo, font);
 
-    // Set slider range: LPARAM = MAKELPARAM(min, max)
-    let range_lparam = ((QUALITY_MAX as u32) << 16 | QUALITY_MIN as u32) as isize;
-    SendMessageW(slider, TBM_SETRANGE, Some(WPARAM(1)), Some(LPARAM(range_lparam)));
-    SendMessageW(slider, TBM_SETPOS, Some(WPARAM(1)), Some(LPARAM(quality as isize)));
+    // Populate format combo box
+    let mut selected_idx: usize = 0;
+    for (i, fmt) in OutputFormat::ALL.iter().enumerate() {
+        add_combo_string(format_combo, fmt.display_name());
+        if *fmt == format {
+            selected_idx = i;
+        }
+    }
+    SendMessageW(format_combo, CB_SETCURSEL, Some(WPARAM(selected_idx)), None);
 
-    y += 34 + 2;
+    // ─── Section 3: Per-format options (starting at fixed Y) ───
+    let oy = OPTIONS_Y_START;
 
-    // Size estimate label (updated live by slider movement)
-    let size_lbl = create_child(
-        hwnd, hinstance, w!("STATIC"),
-        &quality_label(quality as i32),
-        MARGIN, y, inner_w, 20, ID_SIZE_LABEL,
-    );
-    send_font(size_lbl, font);
+    // -- JPEG options --
+    create_jpeg_controls(hwnd, hinstance, font, oy, inner_w, &opts.jpeg);
 
-    y += 20 + SECTION_SPACE + 4;
+    // -- PNG options --
+    create_png_controls(hwnd, hinstance, font, oy, inner_w, &opts.png);
 
-    // ─── Bottom: Save + Cancel buttons (right-aligned) ───
+    // -- WebP options --
+    create_webp_controls(hwnd, hinstance, font, oy, inner_w, &opts.webp);
+
+    // -- AVIF options --
+    create_avif_controls(hwnd, hinstance, font, oy, inner_w, &opts.avif);
+
+    // -- TIFF options --
+    create_tiff_controls(hwnd, hinstance, font, oy, inner_w, &opts.tiff);
+
+    // -- EXR options --
+    create_exr_controls(hwnd, hinstance, font, oy, inner_w, &opts.exr);
+
+    // Show options for the current format, hide all others
+    show_format_options(hwnd, format);
+
+    // ─── Bottom: Save + Cancel buttons (right-aligned, fixed position) ───
+    let btn_y = DLG_H - 75;
     let btn_w = 100;
     let btn_h = 30;
 
     let cancel_btn = create_child(
         hwnd, hinstance, w!("BUTTON"), "Cancel",
-        DLG_W - MARGIN - btn_w, y, btn_w, btn_h, ID_CANCEL,
+        DLG_W - MARGIN - btn_w, btn_y, btn_w, btn_h, ID_CANCEL,
     );
     send_font(cancel_btn, font);
 
     let save_btn = create_child(
         hwnd, hinstance, w!("BUTTON"), "Save",
-        DLG_W - MARGIN - btn_w * 2 - 10, y, btn_w, btn_h, ID_SAVE,
+        DLG_W - MARGIN - btn_w * 2 - 10, btn_y, btn_w, btn_h, ID_SAVE,
     );
     send_font(save_btn, font);
 
@@ -448,8 +651,530 @@ unsafe fn create_controls(hwnd: HWND) {
     let _ = SetFocus(Some(path_edit));
 
     debug!(
-        "create_controls: save_dir='{}', quality={}", save_dir, quality
+        "create_controls: save_dir='{}', format={}", save_dir, format
     );
+}
+
+// ======================== PER-FORMAT CONTROL BUILDERS ========================
+
+/// Creates JPEG option controls: quality slider + chroma subsampling combo.
+unsafe fn create_jpeg_controls(
+    hwnd: HWND,
+    hi: HINSTANCE,
+    font: windows::Win32::Graphics::Gdi::HGDIOBJ,
+    base_y: i32,
+    inner_w: i32,
+    opts: &JpegOptions,
+) {
+    let mut y = base_y;
+
+    // Quality label
+    let ql = create_child(
+        hwnd, hi, w!("STATIC"),
+        &format!("JPEG quality ({}\u{2013}{}):", JPEG_QUALITY_MIN, JPEG_QUALITY_MAX),
+        MARGIN, y, inner_w, 20, ID_JPEG_QUALITY_LABEL,
+    );
+    send_font(ql, font);
+    y += 20 + LABEL_GAP;
+
+    // Quality slider
+    let slider = create_child(
+        hwnd, hi, w!("msctls_trackbar32"), "",
+        MARGIN, y, inner_w, 34, ID_JPEG_QUALITY_SLIDER,
+    );
+    let range_lparam = ((JPEG_QUALITY_MAX as u32) << 16 | JPEG_QUALITY_MIN as u32) as isize;
+    SendMessageW(slider, TBM_SETRANGE, Some(WPARAM(1)), Some(LPARAM(range_lparam)));
+    SendMessageW(slider, TBM_SETPOS, Some(WPARAM(1)), Some(LPARAM(opts.quality as isize)));
+    y += 34 + 2;
+
+    // Quality value label
+    let vl = create_child(
+        hwnd, hi, w!("STATIC"),
+        &jpeg_quality_label(opts.quality as i32),
+        MARGIN, y, inner_w, 20, ID_JPEG_QUALITY_VALUE,
+    );
+    send_font(vl, font);
+    y += 20 + SECTION_SPACE;
+
+    // Chroma subsampling label
+    let cl = create_child(
+        hwnd, hi, w!("STATIC"), "Chroma subsampling:",
+        MARGIN, y, inner_w, 20, ID_JPEG_CHROMA_LABEL,
+    );
+    send_font(cl, font);
+    y += 20 + LABEL_GAP;
+
+    // Chroma combo
+    let combo = create_child(
+        hwnd, hi, w!("COMBOBOX"), "",
+        MARGIN, y, inner_w, 150, ID_JPEG_CHROMA_COMBO,
+    );
+    let combo_style = GetWindowLongW(combo, GWL_STYLE);
+    SetWindowLongW(combo, GWL_STYLE, combo_style | 0x0003);
+    send_font(combo, font);
+
+    let mut sel = 1usize; // default: Half
+    for (i, cs) in ChromaSubsampling::ALL.iter().enumerate() {
+        add_combo_string(combo, cs.label());
+        if *cs == opts.chroma_subsampling {
+            sel = i;
+        }
+    }
+    SendMessageW(combo, CB_SETCURSEL, Some(WPARAM(sel)), None);
+}
+
+/// Creates PNG option controls: compression slider + filter combo.
+unsafe fn create_png_controls(
+    hwnd: HWND,
+    hi: HINSTANCE,
+    font: windows::Win32::Graphics::Gdi::HGDIOBJ,
+    base_y: i32,
+    inner_w: i32,
+    opts: &PngOptions,
+) {
+    let mut y = base_y;
+
+    // Compression label
+    let cl = create_child(
+        hwnd, hi, w!("STATIC"), "Compression level (0\u{2013}9):",
+        MARGIN, y, inner_w, 20, ID_PNG_COMPRESS_LABEL,
+    );
+    send_font(cl, font);
+    y += 20 + LABEL_GAP;
+
+    // Compression slider (0-9)
+    let slider = create_child(
+        hwnd, hi, w!("msctls_trackbar32"), "",
+        MARGIN, y, inner_w, 34, ID_PNG_COMPRESS_SLIDER,
+    );
+    let range_lparam = ((9u32) << 16 | 0u32) as isize;
+    SendMessageW(slider, TBM_SETRANGE, Some(WPARAM(1)), Some(LPARAM(range_lparam)));
+    SendMessageW(slider, TBM_SETPOS, Some(WPARAM(1)), Some(LPARAM(opts.compression as isize)));
+    y += 34 + 2;
+
+    // Compression value label
+    let vl = create_child(
+        hwnd, hi, w!("STATIC"),
+        &png_compression_label(opts.compression as i32),
+        MARGIN, y, inner_w, 20, ID_PNG_COMPRESS_VALUE,
+    );
+    send_font(vl, font);
+    y += 20 + SECTION_SPACE;
+
+    // Filter label
+    let fl = create_child(
+        hwnd, hi, w!("STATIC"), "Filter strategy:",
+        MARGIN, y, inner_w, 20, ID_PNG_FILTER_LABEL,
+    );
+    send_font(fl, font);
+    y += 20 + LABEL_GAP;
+
+    // Filter combo
+    let combo = create_child(
+        hwnd, hi, w!("COMBOBOX"), "",
+        MARGIN, y, inner_w, 200, ID_PNG_FILTER_COMBO,
+    );
+    let combo_style = GetWindowLongW(combo, GWL_STYLE);
+    SetWindowLongW(combo, GWL_STYLE, combo_style | 0x0003);
+    send_font(combo, font);
+
+    let mut sel = 0usize;
+    for (i, f) in PngFilter::ALL.iter().enumerate() {
+        add_combo_string(combo, f.label());
+        if *f == opts.filter {
+            sel = i;
+        }
+    }
+    SendMessageW(combo, CB_SETCURSEL, Some(WPARAM(sel)), None);
+}
+
+/// Creates WebP option controls: mode combo (lossy/lossless) + quality slider.
+unsafe fn create_webp_controls(
+    hwnd: HWND,
+    hi: HINSTANCE,
+    font: windows::Win32::Graphics::Gdi::HGDIOBJ,
+    base_y: i32,
+    inner_w: i32,
+    opts: &WebPOptions,
+) {
+    let mut y = base_y;
+
+    // Mode label
+    let ml = create_child(
+        hwnd, hi, w!("STATIC"), "Mode:",
+        MARGIN, y, inner_w, 20, ID_WEBP_MODE_LABEL,
+    );
+    send_font(ml, font);
+    y += 20 + LABEL_GAP;
+
+    // Mode combo (Lossy / Lossless)
+    let combo = create_child(
+        hwnd, hi, w!("COMBOBOX"), "",
+        MARGIN, y, inner_w, 100, ID_WEBP_MODE_COMBO,
+    );
+    let combo_style = GetWindowLongW(combo, GWL_STYLE);
+    SetWindowLongW(combo, GWL_STYLE, combo_style | 0x0003);
+    send_font(combo, font);
+
+    add_combo_string(combo, "Lossy");
+    add_combo_string(combo, "Lossless");
+    let mode_sel = if opts.lossless { 1usize } else { 0 };
+    SendMessageW(combo, CB_SETCURSEL, Some(WPARAM(mode_sel)), None);
+    y += CTRL_H + SECTION_SPACE;
+
+    // Quality label (only visible in lossy mode)
+    let ql = create_child(
+        hwnd, hi, w!("STATIC"), "Quality (0\u{2013}100):",
+        MARGIN, y, inner_w, 20, ID_WEBP_QUALITY_LABEL,
+    );
+    send_font(ql, font);
+    y += 20 + LABEL_GAP;
+
+    // Quality slider
+    let slider = create_child(
+        hwnd, hi, w!("msctls_trackbar32"), "",
+        MARGIN, y, inner_w, 34, ID_WEBP_QUALITY_SLIDER,
+    );
+    let range_lparam = ((100u32) << 16 | 0u32) as isize;
+    SendMessageW(slider, TBM_SETRANGE, Some(WPARAM(1)), Some(LPARAM(range_lparam)));
+    SendMessageW(slider, TBM_SETPOS, Some(WPARAM(1)), Some(LPARAM(opts.quality as isize)));
+    y += 34 + 2;
+
+    // Quality value label
+    let vl = create_child(
+        hwnd, hi, w!("STATIC"),
+        &format!("{}%", opts.quality as i32),
+        MARGIN, y, inner_w, 20, ID_WEBP_QUALITY_VALUE,
+    );
+    send_font(vl, font);
+}
+
+/// Creates AVIF option controls: quality slider + speed slider.
+unsafe fn create_avif_controls(
+    hwnd: HWND,
+    hi: HINSTANCE,
+    font: windows::Win32::Graphics::Gdi::HGDIOBJ,
+    base_y: i32,
+    inner_w: i32,
+    opts: &AvifOptions,
+) {
+    let mut y = base_y;
+
+    // Quality label
+    let ql = create_child(
+        hwnd, hi, w!("STATIC"), "Quality (1\u{2013}100):",
+        MARGIN, y, inner_w, 20, ID_AVIF_QUALITY_LABEL,
+    );
+    send_font(ql, font);
+    y += 20 + LABEL_GAP;
+
+    // Quality slider (1-100)
+    let slider = create_child(
+        hwnd, hi, w!("msctls_trackbar32"), "",
+        MARGIN, y, inner_w, 34, ID_AVIF_QUALITY_SLIDER,
+    );
+    let range_lparam = ((100u32) << 16 | 1u32) as isize;
+    SendMessageW(slider, TBM_SETRANGE, Some(WPARAM(1)), Some(LPARAM(range_lparam)));
+    SendMessageW(slider, TBM_SETPOS, Some(WPARAM(1)), Some(LPARAM(opts.quality as isize)));
+    y += 34 + 2;
+
+    // Quality value label
+    let vl = create_child(
+        hwnd, hi, w!("STATIC"),
+        &format!("{}%", opts.quality),
+        MARGIN, y, inner_w, 20, ID_AVIF_QUALITY_VALUE,
+    );
+    send_font(vl, font);
+    y += 20 + SECTION_SPACE;
+
+    // Speed label
+    let sl = create_child(
+        hwnd, hi, w!("STATIC"), "Speed (1=slowest/best \u{2013} 10=fastest):",
+        MARGIN, y, inner_w, 20, ID_AVIF_SPEED_LABEL,
+    );
+    send_font(sl, font);
+    y += 20 + LABEL_GAP;
+
+    // Speed slider (1-10)
+    let speed_slider = create_child(
+        hwnd, hi, w!("msctls_trackbar32"), "",
+        MARGIN, y, inner_w, 34, ID_AVIF_SPEED_SLIDER,
+    );
+    let speed_range = ((10u32) << 16 | 1u32) as isize;
+    SendMessageW(speed_slider, TBM_SETRANGE, Some(WPARAM(1)), Some(LPARAM(speed_range)));
+    SendMessageW(speed_slider, TBM_SETPOS, Some(WPARAM(1)), Some(LPARAM(opts.speed as isize)));
+    y += 34 + 2;
+
+    // Speed value label
+    let svl = create_child(
+        hwnd, hi, w!("STATIC"),
+        &avif_speed_label(opts.speed as i32),
+        MARGIN, y, inner_w, 20, ID_AVIF_SPEED_VALUE,
+    );
+    send_font(svl, font);
+}
+
+/// Creates TIFF option controls: compression combo.
+unsafe fn create_tiff_controls(
+    hwnd: HWND,
+    hi: HINSTANCE,
+    font: windows::Win32::Graphics::Gdi::HGDIOBJ,
+    base_y: i32,
+    inner_w: i32,
+    opts: &TiffOptions,
+) {
+    let y = base_y;
+
+    // Compression label
+    let cl = create_child(
+        hwnd, hi, w!("STATIC"), "Compression:",
+        MARGIN, y, inner_w, 20, ID_TIFF_COMPRESS_LABEL,
+    );
+    send_font(cl, font);
+
+    let combo = create_child(
+        hwnd, hi, w!("COMBOBOX"), "",
+        MARGIN, y + 20 + LABEL_GAP, inner_w, 150, ID_TIFF_COMPRESS_COMBO,
+    );
+    let combo_style = GetWindowLongW(combo, GWL_STYLE);
+    SetWindowLongW(combo, GWL_STYLE, combo_style | 0x0003);
+    send_font(combo, font);
+
+    let mut sel = 1usize; // default: Lzw
+    for (i, tc) in TiffCompression::ALL.iter().enumerate() {
+        add_combo_string(combo, tc.label());
+        if *tc == opts.compression {
+            sel = i;
+        }
+    }
+    SendMessageW(combo, CB_SETCURSEL, Some(WPARAM(sel)), None);
+}
+
+/// Creates OpenEXR option controls: compression combo.
+unsafe fn create_exr_controls(
+    hwnd: HWND,
+    hi: HINSTANCE,
+    font: windows::Win32::Graphics::Gdi::HGDIOBJ,
+    base_y: i32,
+    inner_w: i32,
+    opts: &ExrOptions,
+) {
+    let y = base_y;
+
+    // Compression label
+    let cl = create_child(
+        hwnd, hi, w!("STATIC"), "EXR compression:",
+        MARGIN, y, inner_w, 20, ID_EXR_COMPRESS_LABEL,
+    );
+    send_font(cl, font);
+
+    let combo = create_child(
+        hwnd, hi, w!("COMBOBOX"), "",
+        MARGIN, y + 20 + LABEL_GAP, inner_w, 250, ID_EXR_COMPRESS_COMBO,
+    );
+    let combo_style = GetWindowLongW(combo, GWL_STYLE);
+    SetWindowLongW(combo, GWL_STYLE, combo_style | 0x0003);
+    send_font(combo, font);
+
+    let mut sel = 3usize; // default: Zip16
+    for (i, ec) in ExrCompression::ALL.iter().enumerate() {
+        add_combo_string(combo, ec.label());
+        if *ec == opts.compression {
+            sel = i;
+        }
+    }
+    SendMessageW(combo, CB_SETCURSEL, Some(WPARAM(sel)), None);
+}
+
+// ======================== FORMAT OPTIONS VISIBILITY ========================
+
+/// Shows the option controls for the selected format and hides all others.
+unsafe fn show_format_options(hwnd: HWND, format: OutputFormat) {
+    debug!("show_format_options: showing controls for {}", format);
+
+    // JPEG controls
+    let jpeg_show = if format == OutputFormat::Jpeg { SW_SHOW } else { SW_HIDE };
+    show_control(hwnd, ID_JPEG_QUALITY_LABEL, jpeg_show);
+    show_control(hwnd, ID_JPEG_QUALITY_SLIDER, jpeg_show);
+    show_control(hwnd, ID_JPEG_QUALITY_VALUE, jpeg_show);
+    show_control(hwnd, ID_JPEG_CHROMA_LABEL, jpeg_show);
+    show_control(hwnd, ID_JPEG_CHROMA_COMBO, jpeg_show);
+
+    // PNG controls
+    let png_show = if format == OutputFormat::Png { SW_SHOW } else { SW_HIDE };
+    show_control(hwnd, ID_PNG_COMPRESS_LABEL, png_show);
+    show_control(hwnd, ID_PNG_COMPRESS_SLIDER, png_show);
+    show_control(hwnd, ID_PNG_COMPRESS_VALUE, png_show);
+    show_control(hwnd, ID_PNG_FILTER_LABEL, png_show);
+    show_control(hwnd, ID_PNG_FILTER_COMBO, png_show);
+
+    // WebP controls
+    let webp_show = if format == OutputFormat::WebP { SW_SHOW } else { SW_HIDE };
+    show_control(hwnd, ID_WEBP_MODE_LABEL, webp_show);
+    show_control(hwnd, ID_WEBP_MODE_COMBO, webp_show);
+    // Quality only visible in lossy mode
+    if format == OutputFormat::WebP {
+        let is_lossy = read_combo(hwnd, ID_WEBP_MODE_COMBO, 0) == 0;
+        let q_show = if is_lossy { SW_SHOW } else { SW_HIDE };
+        show_control(hwnd, ID_WEBP_QUALITY_LABEL, q_show);
+        show_control(hwnd, ID_WEBP_QUALITY_SLIDER, q_show);
+        show_control(hwnd, ID_WEBP_QUALITY_VALUE, q_show);
+    } else {
+        show_control(hwnd, ID_WEBP_QUALITY_LABEL, SW_HIDE);
+        show_control(hwnd, ID_WEBP_QUALITY_SLIDER, SW_HIDE);
+        show_control(hwnd, ID_WEBP_QUALITY_VALUE, SW_HIDE);
+    }
+
+    // AVIF controls
+    let avif_show = if format == OutputFormat::Avif { SW_SHOW } else { SW_HIDE };
+    show_control(hwnd, ID_AVIF_QUALITY_LABEL, avif_show);
+    show_control(hwnd, ID_AVIF_QUALITY_SLIDER, avif_show);
+    show_control(hwnd, ID_AVIF_QUALITY_VALUE, avif_show);
+    show_control(hwnd, ID_AVIF_SPEED_LABEL, avif_show);
+    show_control(hwnd, ID_AVIF_SPEED_SLIDER, avif_show);
+    show_control(hwnd, ID_AVIF_SPEED_VALUE, avif_show);
+
+    // TIFF controls
+    let tiff_show = if format == OutputFormat::Tiff { SW_SHOW } else { SW_HIDE };
+    show_control(hwnd, ID_TIFF_COMPRESS_LABEL, tiff_show);
+    show_control(hwnd, ID_TIFF_COMPRESS_COMBO, tiff_show);
+
+    // EXR controls
+    let exr_show = if format == OutputFormat::OpenExr { SW_SHOW } else { SW_HIDE };
+    show_control(hwnd, ID_EXR_COMPRESS_LABEL, exr_show);
+    show_control(hwnd, ID_EXR_COMPRESS_COMBO, exr_show);
+
+    // BMP and QOI have no configurable options — nothing to show
+}
+
+/// Shows or hides a control by its ID.
+unsafe fn show_control(hwnd: HWND, id: i32, show: windows::Win32::UI::WindowsAndMessaging::SHOW_WINDOW_CMD) {
+    if let Ok(ctrl) = GetDlgItem(Some(hwnd), id) {
+        let _ = ShowWindow(ctrl, show);
+    }
+}
+
+// ======================== SLIDER LABEL UPDATES ========================
+
+/// Updates all slider value labels after any slider movement.
+unsafe fn update_slider_labels(hwnd: HWND) {
+    // JPEG quality
+    if let (Ok(slider), Ok(label)) = (
+        GetDlgItem(Some(hwnd), ID_JPEG_QUALITY_SLIDER),
+        GetDlgItem(Some(hwnd), ID_JPEG_QUALITY_VALUE),
+    ) {
+        let pos = SendMessageW(slider, TBM_GETPOS, None, None).0 as i32;
+        set_text(label, &jpeg_quality_label(pos));
+    }
+
+    // PNG compression
+    if let (Ok(slider), Ok(label)) = (
+        GetDlgItem(Some(hwnd), ID_PNG_COMPRESS_SLIDER),
+        GetDlgItem(Some(hwnd), ID_PNG_COMPRESS_VALUE),
+    ) {
+        let pos = SendMessageW(slider, TBM_GETPOS, None, None).0 as i32;
+        set_text(label, &png_compression_label(pos));
+    }
+
+    // WebP quality
+    if let (Ok(slider), Ok(label)) = (
+        GetDlgItem(Some(hwnd), ID_WEBP_QUALITY_SLIDER),
+        GetDlgItem(Some(hwnd), ID_WEBP_QUALITY_VALUE),
+    ) {
+        let pos = SendMessageW(slider, TBM_GETPOS, None, None).0 as i32;
+        set_text(label, &format!("{}%", pos));
+    }
+
+    // AVIF quality
+    if let (Ok(slider), Ok(label)) = (
+        GetDlgItem(Some(hwnd), ID_AVIF_QUALITY_SLIDER),
+        GetDlgItem(Some(hwnd), ID_AVIF_QUALITY_VALUE),
+    ) {
+        let pos = SendMessageW(slider, TBM_GETPOS, None, None).0 as i32;
+        set_text(label, &format!("{}%", pos));
+    }
+
+    // AVIF speed
+    if let (Ok(slider), Ok(label)) = (
+        GetDlgItem(Some(hwnd), ID_AVIF_SPEED_SLIDER),
+        GetDlgItem(Some(hwnd), ID_AVIF_SPEED_VALUE),
+    ) {
+        let pos = SendMessageW(slider, TBM_GETPOS, None, None).0 as i32;
+        set_text(label, &avif_speed_label(pos));
+    }
+}
+
+// ======================== LABEL FORMATTERS ========================
+
+/// Returns a descriptive label for the given JPEG quality value.
+///
+/// Shows the quality percentage, estimated 1080p file size, and marks the
+/// recommended value.
+fn jpeg_quality_label(q: i32) -> String {
+    // Estimated JPEG size for a typical 1920x1080 screenshot (KB).
+    let size_kb = match q {
+        50 => 120,
+        51..=55 => 140,
+        56..=60 => 170,
+        61..=65 => 200,
+        66..=70 => 250,
+        71..=75 => 300,
+        76..=80 => 380,
+        81..=85 => 450,
+        86..=90 => 600,
+        91..=95 => 900,
+        96..=100 => 2000,
+        _ => 450,
+    };
+
+    let size_str = if size_kb >= 1000 {
+        format!("~{:.1} MB", size_kb as f64 / 1000.0)
+    } else {
+        format!("~{} KB", size_kb)
+    };
+
+    if q == 85 {
+        format!("{}% \u{00B7} {} \u{00B7} Recommended", q, size_str)
+    } else {
+        format!("{}% \u{00B7} {}", q, size_str)
+    }
+}
+
+/// Returns a descriptive label for the given PNG compression level.
+fn png_compression_label(level: i32) -> String {
+    let desc = match level {
+        0 => "fastest, no compression",
+        1..=3 => "fast",
+        4..=6 => "balanced",
+        7..=8 => "slow, smaller files",
+        9 => "maximum compression, slowest",
+        _ => "balanced",
+    };
+
+    if level == 6 {
+        format!("{} \u{00B7} {} \u{00B7} Recommended", level, desc)
+    } else {
+        format!("{} \u{00B7} {}", level, desc)
+    }
+}
+
+/// Returns a descriptive label for the given AVIF speed level.
+fn avif_speed_label(speed: i32) -> String {
+    let desc = match speed {
+        1 => "slowest, best quality",
+        2..=3 => "slow, high quality",
+        4 => "balanced",
+        5..=6 => "fast",
+        7..=8 => "faster, lower quality",
+        9..=10 => "fastest, lowest quality",
+        _ => "balanced",
+    };
+
+    if speed == 4 {
+        format!("{} \u{00B7} {} \u{00B7} Recommended", speed, desc)
+    } else {
+        format!("{} \u{00B7} {}", speed, desc)
+    }
 }
 
 // ======================== HELPERS ========================
@@ -509,41 +1234,15 @@ unsafe fn set_text(hwnd: HWND, text: &str) {
     let _ = SetWindowTextW(hwnd, windows::core::PCWSTR(wide.as_ptr()));
 }
 
-/// Returns a descriptive label for the given quality value.
-///
-/// Shows the quality percentage, estimated 1080p file size, and marks the
-/// recommended value. Examples:
-/// - `"85% · ~400 KB · Recommended"`
-/// - `"70% · ~250 KB"`
-fn quality_label(q: i32) -> String {
-    // Estimated JPEG size for a typical 1920x1080 screenshot (KB).
-    // Based on empirical measurements of mixed-content screen captures.
-    let size_kb = match q {
-        50 => 120,
-        51..=55 => 140,
-        56..=60 => 170,
-        61..=65 => 200,
-        66..=70 => 250,
-        71..=75 => 300,
-        76..=80 => 380,
-        81..=85 => 450,
-        86..=90 => 600,
-        91..=95 => 900,
-        96..=100 => 2000,
-        _ => 450,
-    };
-
-    let size_str = if size_kb >= 1000 {
-        format!("~{:.1} MB", size_kb as f64 / 1000.0)
-    } else {
-        format!("~{} KB", size_kb)
-    };
-
-    if q == QUALITY_RECOMMENDED {
-        format!("{}% \u{00B7} {} \u{00B7} Recommended", q, size_str)
-    } else {
-        format!("{}% \u{00B7} {}", q, size_str)
-    }
+/// Adds a string item to a combo box.
+unsafe fn add_combo_string(combo: HWND, text: &str) {
+    let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+    SendMessageW(
+        combo,
+        CB_ADDSTRING,
+        None,
+        Some(LPARAM(wide.as_ptr() as isize)),
+    );
 }
 
 /// Opens a Windows folder picker dialog and returns the selected path.

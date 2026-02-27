@@ -623,13 +623,7 @@ unsafe fn create_controls(hwnd: HWND) {
 
     y += 20 + LABEL_GAP;
 
-    let format_combo = create_child(
-        hwnd, hinstance, w!("COMBOBOX"), "",
-        MARGIN, y, inner_w, 200, ID_FORMAT_COMBO,
-    );
-    // CBS_DROPDOWNLIST = 0x0003
-    let combo_style = GetWindowLongW(format_combo, GWL_STYLE);
-    SetWindowLongW(format_combo, GWL_STYLE, combo_style | 0x0003);
+    let format_combo = create_combo_box(hwnd, hinstance, MARGIN, y, inner_w, 200, ID_FORMAT_COMBO);
     send_font(format_combo, font);
 
     let mut selected_idx: usize = 0;
@@ -786,12 +780,7 @@ unsafe fn create_webp_controls(
     send_font(ml, font);
     y += 20 + LABEL_GAP;
 
-    let combo = create_child(
-        hwnd, hi, w!("COMBOBOX"), "",
-        MARGIN, y, inner_w, 100, ID_WEBP_MODE_COMBO,
-    );
-    let combo_style = GetWindowLongW(combo, GWL_STYLE);
-    SetWindowLongW(combo, GWL_STYLE, combo_style | 0x0003);
+    let combo = create_combo_box(hwnd, hi, MARGIN, y, inner_w, 100, ID_WEBP_MODE_COMBO);
     send_font(combo, font);
 
     add_combo_string(combo, "Lossy");
@@ -878,12 +867,7 @@ unsafe fn create_jpeg_advanced(
     );
     send_font(cl, font);
 
-    let combo = create_child(
-        hwnd, hi, w!("COMBOBOX"), "",
-        MARGIN, y + 20 + LABEL_GAP, inner_w, 150, ID_JPEG_CHROMA_COMBO,
-    );
-    let combo_style = GetWindowLongW(combo, GWL_STYLE);
-    SetWindowLongW(combo, GWL_STYLE, combo_style | 0x0003);
+    let combo = create_combo_box(hwnd, hi, MARGIN, y + 20 + LABEL_GAP, inner_w, 150, ID_JPEG_CHROMA_COMBO);
     send_font(combo, font);
 
     let mut sel = 1usize;
@@ -913,12 +897,7 @@ unsafe fn create_png_advanced(
     );
     send_font(fl, font);
 
-    let combo = create_child(
-        hwnd, hi, w!("COMBOBOX"), "",
-        MARGIN, y + 20 + LABEL_GAP, inner_w, 200, ID_PNG_FILTER_COMBO,
-    );
-    let combo_style = GetWindowLongW(combo, GWL_STYLE);
-    SetWindowLongW(combo, GWL_STYLE, combo_style | 0x0003);
+    let combo = create_combo_box(hwnd, hi, MARGIN, y + 20 + LABEL_GAP, inner_w, 200, ID_PNG_FILTER_COMBO);
     send_font(combo, font);
 
     let mut sel = 0usize;
@@ -983,12 +962,7 @@ unsafe fn create_tiff_controls(
     );
     send_font(cl, font);
 
-    let combo = create_child(
-        hwnd, hi, w!("COMBOBOX"), "",
-        MARGIN, y + 20 + LABEL_GAP, inner_w, 150, ID_TIFF_COMPRESS_COMBO,
-    );
-    let combo_style = GetWindowLongW(combo, GWL_STYLE);
-    SetWindowLongW(combo, GWL_STYLE, combo_style | 0x0003);
+    let combo = create_combo_box(hwnd, hi, MARGIN, y + 20 + LABEL_GAP, inner_w, 150, ID_TIFF_COMPRESS_COMBO);
     send_font(combo, font);
 
     let mut sel = 1usize;
@@ -1018,12 +992,7 @@ unsafe fn create_exr_controls(
     );
     send_font(cl, font);
 
-    let combo = create_child(
-        hwnd, hi, w!("COMBOBOX"), "",
-        MARGIN, y + 20 + LABEL_GAP, inner_w, 250, ID_EXR_COMPRESS_COMBO,
-    );
-    let combo_style = GetWindowLongW(combo, GWL_STYLE);
-    SetWindowLongW(combo, GWL_STYLE, combo_style | 0x0003);
+    let combo = create_combo_box(hwnd, hi, MARGIN, y + 20 + LABEL_GAP, inner_w, 250, ID_EXR_COMPRESS_COMBO);
     send_font(combo, font);
 
     let mut sel = 3usize;
@@ -1235,6 +1204,37 @@ fn avif_speed_label(speed: i32) -> String {
 }
 
 // ======================== HELPERS ========================
+
+/// Creates a combo box with CBS_DROPDOWNLIST style.
+///
+/// CBS_DROPDOWNLIST (0x0003) **must** be present at creation time — setting it
+/// via `SetWindowLongW` after the fact does not work (the control renders as
+/// CBS_SIMPLE with an inline list instead of a proper dropdown popup).
+unsafe fn create_combo_box(
+    parent: HWND,
+    hinstance: HINSTANCE,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    id: i32,
+) -> HWND {
+    // CBS_DROPDOWNLIST = 0x0003 — compose via WINDOW_STYLE arithmetic
+    let style = WS_CHILD | WS_VISIBLE | WS_TABSTOP | windows::Win32::UI::WindowsAndMessaging::WINDOW_STYLE(0x0003);
+
+    CreateWindowExW(
+        WINDOW_EX_STYLE::default(),
+        w!("COMBOBOX"),
+        windows::core::PCWSTR::null(),
+        style,
+        x, y, w, h,
+        Some(parent),
+        Some(HMENU(id as *mut _)),
+        Some(hinstance),
+        None,
+    )
+    .unwrap_or(HWND(ptr::null_mut()))
+}
 
 /// Creates a child window (control) with the given class, text, and position.
 unsafe fn create_child(

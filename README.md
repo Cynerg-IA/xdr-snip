@@ -123,6 +123,13 @@ Single Rust binary using the `windows` crate for Win32/GDI and WinRT APIs:
 
 ## Release History
 
+### v0.4.4 — Fix AVIF encoding hang + quality guardrails (2026-02-27)
+
+- **Threaded encoding** — image encoding runs on a background thread; UI stays responsive during slow AVIF/high-quality encodes (previously froze for 100+ seconds on 5K images)
+- **AVIF speed clamp** — minimum speed raised to 4 (speeds 1-3 are impractical: minutes per encode, negligible compression gain)
+- **Quality minimums by format** — JPEG 25+, WebP 25+, AVIF 50+ (slower encoders get higher floors)
+- **Encoding metrics** — duration and file size logged for every encode
+
 ### v0.4.3 — Settings layout + 1080p size estimates (2026-02-27)
 
 - **Tight layout** — eliminated gaps between standard and advanced controls; TIFF/EXR controls reposition to top when no standard controls above

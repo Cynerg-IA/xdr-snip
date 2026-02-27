@@ -11,12 +11,12 @@ use snip_types::{Region, SnipError};
 use tracing::{debug, info, warn};
 use windows::core::w;
 use windows::Win32::Foundation::{
-    COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM,
+    BOOL, COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM,
 };
 use windows::Win32::Graphics::Gdi::{
-    BeginPaint, CreatePen, CreateSolidBrush, DeleteObject, EndPaint, FillRect, FrameRect,
-    GetMonitorInfoW, InvalidateRect, MonitorFromPoint, SelectObject, MONITORINFO,
-    MONITOR_DEFAULTTONEAREST, PAINTSTRUCT, PS_SOLID,
+    BeginPaint, CreatePen, CreateSolidBrush, DeleteObject, EndPaint, EnumDisplayMonitors,
+    FillRect, FrameRect, GetMonitorInfoW, HDC, InvalidateRect, MonitorFromPoint, SelectObject,
+    HMONITOR, MONITORINFO, MONITOR_DEFAULTTONEAREST, PAINTSTRUCT, PS_SOLID,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Input::KeyboardAndMouse::{SetCapture, VK_ESCAPE};
@@ -167,9 +167,8 @@ pub fn select_region() -> Result<Option<(Region, u32)>, SnipError> {
                 h: region.h,
             };
 
-            // For MVP: use the HMONITOR handle value as a simple monitor identifier.
-            // The capture helper can map this back to a display device.
-            let monitor_index = hmonitor.0 as usize as u32;
+            // Convert HMONITOR handle to 0-based index by enumerating all monitors
+            let monitor_index = hmonitor_to_index(hmonitor);
 
             info!(
                 "select_region: selected region={}, monitor_index={}",
@@ -442,4 +441,48 @@ fn lparam_to_point(lparam: LPARAM) -> (i32, i32) {
     let x = (lparam.0 & 0xFFFF) as i16 as i32;
     let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
     (x, y)
+}
+
+/// Converts an HMONITOR handle to a 0-based monitor index by enumerating
+/// all display monitors and finding the matching handle.
+///
+/// Falls back to index 0 if the handle is not found.
+fn hmonitor_to_index(target: HMONITOR) -> u32 {
+    let mut monitors: Vec<HMONITOR> = Vec::new();
+    let monitors_ptr = &mut monitors as *mut Vec<HMONITOR>;
+
+    /// Callback for `EnumDisplayMonitors` — pushes each monitor handle into the Vec.
+    unsafe extern "system" fn enum_proc(
+        hmon: HMONITOR,
+        _hdc: HDC,
+        _rect: *mut RECT,
+        lparam: LPARAM,
+    ) -> BOOL {
+        let list = &mut *(lparam.0 as *mut Vec<HMONITOR>);
+        list.push(hmon);
+        BOOL(1)
+    }
+
+    // SAFETY: EnumDisplayMonitors with a valid callback and pointer is safe.
+    // The monitors Vec lives for the duration of the call.
+    unsafe {
+        let _ = EnumDisplayMonitors(
+            None,
+            None,
+            Some(enum_proc),
+            LPARAM(monitors_ptr as isize),
+        );
+    }
+
+    let index = monitors
+        .iter()
+        .position(|&m| m == target)
+        .unwrap_or(0) as u32;
+
+    debug!(
+        "hmonitor_to_index: target={:?}, found {} monitors, index={}",
+        target.0, monitors.len(), index
+    );
+
+    index
 }

@@ -59,8 +59,8 @@ pub fn capture_region(
         capture_exe.display()
     );
 
-    // Build the region string: "X,Y,WxH"
-    let region_arg = format!("{},{},{}x{}", region.x, region.y, region.w, region.h);
+    // Build the region string: "X,Y,W,H" (all comma-separated, as C# expects)
+    let region_arg = format!("{},{},{},{}", region.x, region.y, region.w, region.h);
 
     let args = [
         "--monitor",

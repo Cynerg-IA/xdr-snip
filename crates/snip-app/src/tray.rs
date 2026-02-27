@@ -17,7 +17,6 @@ pub struct TrayMenuIds {
     pub screenshot: String,
     pub open_folder: String,
     pub settings: String,
-    pub open_log: String,
     pub quit: String,
 }
 
@@ -47,7 +46,6 @@ pub fn create_tray() -> Result<(TrayIcon, TrayMenuIds), SnipError> {
     let item_screenshot = MenuItem::new("Take Screenshot", true, None);
     let item_open_folder = MenuItem::new("Open Folder", true, None);
     let item_settings = MenuItem::new("Settings", true, None);
-    let item_open_log = MenuItem::new("Open Log", true, None);
     let item_quit = MenuItem::new("Quit", true, None);
 
     // Capture IDs before appending — the ID is a simple value type
@@ -55,13 +53,12 @@ pub fn create_tray() -> Result<(TrayIcon, TrayMenuIds), SnipError> {
         screenshot: item_screenshot.id().0.clone(),
         open_folder: item_open_folder.id().0.clone(),
         settings: item_settings.id().0.clone(),
-        open_log: item_open_log.id().0.clone(),
         quit: item_quit.id().0.clone(),
     };
 
     debug!(
-        "create_tray: menu IDs — screenshot={}, open_folder={}, settings={}, open_log={}, quit={}",
-        ids.screenshot, ids.open_folder, ids.settings, ids.open_log, ids.quit
+        "create_tray: menu IDs — screenshot={}, open_folder={}, settings={}, quit={}",
+        ids.screenshot, ids.open_folder, ids.settings, ids.quit
     );
 
     let append = |item: &dyn tray_icon::menu::IsMenuItem, label: &str| -> Result<(), SnipError> {
@@ -74,7 +71,6 @@ pub fn create_tray() -> Result<(TrayIcon, TrayMenuIds), SnipError> {
     append(&PredefinedMenuItem::separator(), "separator")?;
     append(&item_open_folder, "Open Folder")?;
     append(&item_settings, "Settings")?;
-    append(&item_open_log, "Open Log")?;
     append(&PredefinedMenuItem::separator(), "separator")?;
     append(&item_quit, "Quit")?;
 

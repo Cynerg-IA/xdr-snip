@@ -136,9 +136,6 @@ fn run() -> Result<(), SnipError> {
             } else if clicked_id == tray_ids.settings {
                 debug!("main: menu -> Settings");
                 open_config_file();
-            } else if clicked_id == tray_ids.open_log {
-                debug!("main: menu -> Open Log");
-                open_log_file();
             } else if clicked_id == tray_ids.quit {
                 info!("main: menu -> Quit");
                 break;
@@ -301,21 +298,6 @@ fn open_config_file() {
         Err(e) => {
             warn!("open_config_file: failed to resolve config path: {}", e);
         }
-    }
-}
-
-/// Opens the log file (`%APPDATA%/xdr-snip/xdr-snip.log`) in the default editor.
-fn open_log_file() {
-    let log_path = dirs::config_dir()
-        .map(|d| d.join("xdr-snip").join("xdr-snip.log"))
-        .unwrap_or_default();
-
-    if log_path.exists() {
-        debug!("open_log_file: opening {}", log_path.display());
-        shell_open(&log_path.to_string_lossy());
-        info!("open_log_file: dispatched for {}", log_path.display());
-    } else {
-        warn!("open_log_file: log file not found at {}", log_path.display());
     }
 }
 

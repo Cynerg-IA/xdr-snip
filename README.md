@@ -15,8 +15,7 @@ Lightweight HDR-aware screenshot tool for Windows 11. Select a region, capture i
 - **JPEG output** — configurable quality (default 85%), typically 200-800KB for a full screen
 - **Clipboard + file** — copies to clipboard and saves to `~/Pictures/XDR-Snips/`
 - **System tray** — right-click for Take Screenshot, Open Folder, Quit
-- **Thumbnail preview** — brief popup showing what was captured
-- **Toast notification** — dimensions, file size, save path
+- **Capture preview** — popup with thumbnail, dimensions, file size, clipboard status (auto-closes after 4s)
 - **Single exe** — ~11MB, no installer, no dependencies, no .NET runtime
 - **DPI-aware** — per-monitor DPI v2, correct coordinates on mixed-DPI setups
 
@@ -76,8 +75,7 @@ Single Rust binary using the `windows` crate for all Win32 and WinRT APIs:
 | `overlay.rs` | Frozen-screen overlay with double-buffered region selection |
 | `capture.rs` | `Windows.Graphics.Capture` → D3D11 → HDR tone map → JPEG encode |
 | `clipboard.rs` | Decode JPEG → set `CF_DIB` via `arboard` |
-| `notification.rs` | Win32 `Shell_NotifyIconW` toast notification |
-| `preview.rs` | Floating thumbnail popup (auto-closes after 3s) |
+| `preview.rs` | Capture preview popup — thumbnail + info text (auto-closes after 4s) |
 | `tray.rs` | System tray icon + context menu via `tray-icon` crate |
 | `config.rs` | TOML config load/validate from `%APPDATA%` |
 

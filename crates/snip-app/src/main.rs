@@ -11,7 +11,6 @@ mod capture;
 mod clipboard;
 mod config;
 mod hotkey;
-mod notification;
 mod overlay;
 mod preview;
 mod tray;
@@ -146,7 +145,6 @@ fn run() -> Result<(), SnipError> {
 
     // Cleanup
     preview::close_preview();
-    notification::remove_notification_icon();
     info!("main: cleanup complete");
 
     Ok(())
@@ -154,9 +152,9 @@ fn run() -> Result<(), SnipError> {
 
 // ======================== CAPTURE WORKFLOW ========================
 
-/// Runs the full capture pipeline: overlay -> capture -> clipboard -> notification.
+/// Runs the full capture pipeline: overlay -> capture -> clipboard -> preview.
 ///
-/// Errors are logged and displayed via notification — they do not crash the app.
+/// Errors are logged and displayed via preview popup — they do not crash the app.
 fn handle_capture(cfg: &snip_types::Config, save_dir: &PathBuf) {
     info!("handle_capture: starting capture workflow");
 
@@ -211,16 +209,8 @@ fn handle_capture(cfg: &snip_types::Config, save_dir: &PathBuf) {
         false
     };
 
-    // Step 5: Show notification with capture details
-    if cfg.behavior.show_notification {
-        if let Err(e) = notification::show_capture_notification(&output_path, clipboard_ok) {
-            warn!("handle_capture: notification failed: {}", e);
-            // Non-fatal
-        }
-    }
-
-    // Step 6: Show brief thumbnail preview in bottom-right corner
-    if let Err(e) = preview::show_preview(&output_path) {
+    // Step 5: Show capture preview popup (thumbnail + info text)
+    if let Err(e) = preview::show_preview(&output_path, clipboard_ok) {
         warn!("handle_capture: preview failed: {}", e);
         // Non-fatal — capture was still successful
     }

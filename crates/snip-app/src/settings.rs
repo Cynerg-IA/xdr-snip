@@ -72,19 +72,22 @@ const ID_CANCEL: i32 = 106;
 // ======================== LAYOUT CONSTANTS ========================
 
 /// Dialog width in pixels.
-const DLG_W: i32 = 460;
+const DLG_W: i32 = 480;
 
-/// Dialog height in pixels.
-const DLG_H: i32 = 230;
+/// Dialog height in pixels (includes title bar + borders).
+const DLG_H: i32 = 290;
 
-/// Left margin for controls.
-const MARGIN: i32 = 16;
+/// Left/right margin for controls.
+const MARGIN: i32 = 20;
 
-/// Standard control height.
-const CTRL_H: i32 = 24;
+/// Standard control height (text inputs, labels).
+const CTRL_H: i32 = 26;
 
-/// Vertical spacing between rows.
-const ROW_SPACE: i32 = 12;
+/// Vertical spacing between sections.
+const SECTION_SPACE: i32 = 18;
+
+/// Vertical spacing between label and its control.
+const LABEL_GAP: i32 = 4;
 
 /// Minimum JPEG quality (below 50 = visible artifacts on text).
 const QUALITY_MIN: i32 = 50;
@@ -341,19 +344,22 @@ unsafe fn create_controls(hwnd: HWND) {
         }
     };
 
+    // Usable width inside margins
+    let inner_w = DLG_W - MARGIN * 2;
     let mut y = MARGIN;
 
-    // ─── Row 1: Save path label ───
+    // ─── Section 1: Save folder ───
     let lbl = create_child(
         hwnd, hinstance, w!("STATIC"), "Save folder:",
-        MARGIN, y, 80, CTRL_H, 0,
+        MARGIN, y, inner_w, 20, 0,
     );
     send_font(lbl, font);
 
-    y += CTRL_H + 4;
+    y += 20 + LABEL_GAP;
 
-    // ─── Row 2: Save path edit + Browse button ───
-    let edit_w = DLG_W - MARGIN * 2 - 90 - 8;
+    // Path edit box + Browse button
+    let browse_w = 90;
+    let edit_w = inner_w - browse_w - 8;
     let path_edit = create_child(
         hwnd, hinstance, w!("EDIT"), &save_dir,
         MARGIN, y, edit_w, CTRL_H, ID_PATH_EDIT,
@@ -365,27 +371,26 @@ unsafe fn create_controls(hwnd: HWND) {
 
     let browse = create_child(
         hwnd, hinstance, w!("BUTTON"), "Browse...",
-        MARGIN + edit_w + 8, y, 82, CTRL_H, ID_BROWSE,
+        MARGIN + edit_w + 8, y, browse_w, CTRL_H, ID_BROWSE,
     );
     send_font(browse, font);
 
-    y += CTRL_H + ROW_SPACE;
+    y += CTRL_H + SECTION_SPACE;
 
-    // ─── Row 3: Quality label ───
+    // ─── Section 2: JPEG quality slider ───
     let ql = create_child(
         hwnd, hinstance, w!("STATIC"),
         &format!("JPEG quality ({}\u{2013}{}):", QUALITY_MIN, QUALITY_MAX),
-        MARGIN, y, 160, CTRL_H, 0,
+        MARGIN, y, inner_w, 20, 0,
     );
     send_font(ql, font);
 
-    y += CTRL_H + 4;
+    y += 20 + LABEL_GAP;
 
-    // ─── Row 4: Quality slider (trackbar) ───
-    let slider_w = DLG_W - MARGIN * 2;
+    // Slider (trackbar)
     let slider = create_child(
         hwnd, hinstance, w!("msctls_trackbar32"), "",
-        MARGIN, y, slider_w, 30, ID_QUALITY_SLIDER,
+        MARGIN, y, inner_w, 34, ID_QUALITY_SLIDER,
     );
 
     // Set slider range: LPARAM = MAKELPARAM(min, max)
@@ -393,31 +398,33 @@ unsafe fn create_controls(hwnd: HWND) {
     SendMessageW(slider, TBM_SETRANGE, Some(WPARAM(1)), Some(LPARAM(range_lparam)));
     SendMessageW(slider, TBM_SETPOS, Some(WPARAM(1)), Some(LPARAM(quality as isize)));
 
-    y += 30 + 4;
+    y += 34 + 2;
 
-    // ─── Row 5: Size estimate label (updated live by slider) ───
+    // Size estimate label (updated live by slider movement)
     let size_lbl = create_child(
         hwnd, hinstance, w!("STATIC"),
         &quality_label(quality as i32),
-        MARGIN, y, DLG_W - MARGIN * 2, CTRL_H, ID_SIZE_LABEL,
+        MARGIN, y, inner_w, 20, ID_SIZE_LABEL,
     );
     send_font(size_lbl, font);
 
-    y += CTRL_H + ROW_SPACE;
+    y += 20 + SECTION_SPACE + 4;
 
-    // ─── Row 6: Save + Cancel buttons ───
-    let btn_w = 90;
-    let save_btn = create_child(
-        hwnd, hinstance, w!("BUTTON"), "Save",
-        DLG_W - MARGIN - btn_w * 2 - 8, y, btn_w, CTRL_H + 4, ID_SAVE,
-    );
-    send_font(save_btn, font);
+    // ─── Bottom: Save + Cancel buttons (right-aligned) ───
+    let btn_w = 100;
+    let btn_h = 30;
 
     let cancel_btn = create_child(
         hwnd, hinstance, w!("BUTTON"), "Cancel",
-        DLG_W - MARGIN - btn_w, y, btn_w, CTRL_H + 4, ID_CANCEL,
+        DLG_W - MARGIN - btn_w, y, btn_w, btn_h, ID_CANCEL,
     );
     send_font(cancel_btn, font);
+
+    let save_btn = create_child(
+        hwnd, hinstance, w!("BUTTON"), "Save",
+        DLG_W - MARGIN - btn_w * 2 - 10, y, btn_w, btn_h, ID_SAVE,
+    );
+    send_font(save_btn, font);
 
     // Focus the path edit by default
     let _ = SetFocus(Some(path_edit));

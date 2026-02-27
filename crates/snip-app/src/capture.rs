@@ -125,11 +125,13 @@ pub fn extract_hdr_region(frame: &HdrFrame, vscreen_region: &Region) -> Vec<u8> 
 
 /// Tone maps `R16G16B16A16Float` (HDR) pixel data to `BGRA8` (SDR).
 ///
-/// Uses Extended Reinhard (luminance-preserving) with sRGB gamma encoding.
-/// Processes scanlines in parallel via rayon for performance.
+/// Uses conditional Extended Reinhard: only applies tone mapping when the
+/// luminance exceeds 1.0 (actual HDR content). SDR values (≤1.0) pass
+/// through with just sRGB gamma — no darkening. This is critical because
+/// WinRT reports `R16G16B16A16Float` even for SDR displays, and naive
+/// Reinhard crushes SDR values (e.g. 1.0 → 0.5, losing 67 levels).
 ///
-/// SDR content (values in [0,1]) passes through nearly unchanged — the
-/// Reinhard curve is close to identity for small inputs.
+/// Processes scanlines in parallel via rayon for performance.
 fn tone_map_hdr(half_pixels: &[u8], width: usize, height: usize) -> Vec<u8> {
     let src_stride = width * 8; // 4 × f16
     let dst_stride = width * 4; // BGRA8
@@ -167,8 +169,21 @@ fn tone_map_hdr(half_pixels: &[u8], width: usize, height: usize) -> Vec<u8> {
                     dst_row[out + 1] = 0;   // G
                     dst_row[out + 2] = 0;   // R
                     dst_row[out + 3] = 255; // A
+                } else if lum <= 1.0 {
+                    // SDR range: pass through with just sRGB gamma, no Reinhard.
+                    // Clamp channels individually (a channel could exceed 1.0
+                    // even if luminance doesn't, e.g. saturated colors).
+                    let r_out = linear_to_srgb(clamp01(r));
+                    let g_out = linear_to_srgb(clamp01(g));
+                    let b_out = linear_to_srgb(clamp01(b));
+
+                    dst_row[out] = float_to_byte(b_out);
+                    dst_row[out + 1] = float_to_byte(g_out);
+                    dst_row[out + 2] = float_to_byte(r_out);
+                    dst_row[out + 3] = float_to_byte(clamp01(a));
                 } else {
-                    // Extended Reinhard: L_mapped = L / (1 + L)
+                    // HDR range (lum > 1.0): Extended Reinhard tone mapping.
+                    // L_mapped = L / (1 + L), then scale all channels uniformly.
                     let scale = (lum / (1.0 + lum)) / lum;
 
                     let r_mapped = linear_to_srgb(clamp01(r * scale));

@@ -66,7 +66,9 @@ pub fn encode_image(
         width, height, format, output.display()
     );
 
-    match format {
+    let start = std::time::Instant::now();
+
+    let result = match format {
         OutputFormat::Jpeg => encode_jpeg_with_options(rgb_pixels, width, height, &options.jpeg, output),
         OutputFormat::Png => encode_png(rgb_pixels, width, height, &options.png, output),
         OutputFormat::WebP => encode_webp(rgb_pixels, width, height, &options.webp, output),
@@ -82,7 +84,21 @@ pub fn encode_image(
                 encode_exr_sdr(rgb_pixels, width, height, &options.exr, output)
             }
         }
+    };
+
+    let elapsed = start.elapsed();
+    if result.is_ok() {
+        // Log file size for context
+        let file_size = std::fs::metadata(output)
+            .map(|m| m.len())
+            .unwrap_or(0);
+        info!(
+            "encode_image: {} completed in {:.1}s ({} bytes)",
+            format, elapsed.as_secs_f32(), file_size
+        );
     }
+
+    result
 }
 
 /// Extracts raw HDR pixel data (R16G16B16A16Float) for a selected region.
@@ -221,6 +237,9 @@ fn encode_webp(
 }
 
 /// AVIF encoder via `ravif` crate.
+///
+/// Speed is clamped to 4-10. Speeds 1-3 are impractical for screenshots:
+/// a 5K image at speed=1 can take 2+ minutes and produce 500MB+ output.
 fn encode_avif(
     rgb: &[u8],
     w: u32,
@@ -229,7 +248,14 @@ fn encode_avif(
     out: &Path,
 ) -> Result<(), SnipError> {
     let quality = opts.quality.clamp(1, 100) as f32;
-    let speed = opts.speed.clamp(1, 10);
+    let speed = opts.speed.clamp(4, 10);
+
+    if opts.speed < 4 {
+        warn!(
+            "encode_avif: configured speed={} clamped to 4 (speeds 1-3 are impractical for screenshots)",
+            opts.speed
+        );
+    }
 
     debug!("encode_avif: encoding {}x{} (q={}, speed={})", w, h, quality, speed);
 

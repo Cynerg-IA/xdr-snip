@@ -261,28 +261,7 @@ fn handle_capture(cfg: &snip_types::Config, save_dir: &PathBuf) {
         output_path.display(), cfg.capture.format
     );
 
-    // Step 5: Encode in configured format
-    if cfg.behavior.save_to_file {
-        if pixels_rgb.is_empty() {
-            error!("handle_capture: no pixels from either HDR or GDI source");
-            return;
-        }
-
-        if let Err(e) = capture::encode_image(
-            &pixels_rgb,
-            region.w,
-            region.h,
-            cfg.capture.format,
-            &cfg.capture.format_options,
-            &output_path,
-            raw_hdr.as_ref(),
-        ) {
-            error!("handle_capture: {} encode failed: {}", cfg.capture.format, e);
-            return;
-        }
-    }
-
-    // Step 6: Copy to clipboard (always use the RGB pixels directly)
+    // Step 5: Copy to clipboard first (fast ~40ms, needs Win32 main thread)
     let clipboard_ok = if cfg.behavior.copy_to_clipboard {
         match clipboard::copy_to_clipboard_pixels(&pixels_rgb, region.w, region.h) {
             Ok(()) => true,
@@ -294,6 +273,44 @@ fn handle_capture(cfg: &snip_types::Config, save_dir: &PathBuf) {
     } else {
         false
     };
+
+    // Step 6: Encode in configured format (on background thread for UI responsiveness)
+    if cfg.behavior.save_to_file {
+        if pixels_rgb.is_empty() {
+            error!("handle_capture: no pixels from either HDR or GDI source");
+            return;
+        }
+
+        let format = cfg.capture.format;
+        let options = cfg.capture.format_options.clone();
+        let out_path = output_path.clone();
+        let w = region.w;
+        let h = region.h;
+
+        // Spawn encoding on a background thread so the main loop stays responsive.
+        // AVIF at high quality can take 10+ seconds; without threading the UI freezes.
+        let encode_handle = std::thread::spawn(move || {
+            capture::encode_image(&pixels_rgb, w, h, format, &options, &out_path, raw_hdr.as_ref())
+        });
+
+        // Keep Win32 message pump running while encoding (repaints, settings dialog, etc.)
+        while !encode_handle.is_finished() {
+            drain_win32_messages();
+            std::thread::sleep(std::time::Duration::from_millis(16));
+        }
+
+        match encode_handle.join() {
+            Ok(Ok(())) => { /* encode_image already logged timing */ }
+            Ok(Err(e)) => {
+                error!("handle_capture: {} encode failed: {}", format, e);
+                return;
+            }
+            Err(_) => {
+                error!("handle_capture: encoding thread panicked");
+                return;
+            }
+        }
+    }
 
     // Step 7: Show capture preview popup (thumbnail + info text)
     if let Err(e) = preview::show_preview(&output_path, clipboard_ok) {

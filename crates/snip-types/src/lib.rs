@@ -232,7 +232,8 @@ pub struct AvifOptions {
     #[serde(default = "default_avif_quality")]
     pub quality: u8,
 
-    /// Speed (1-10). Lower = slower but better compression.
+    /// Speed (4-10). Lower = slower but better compression.
+    /// Speeds 1-3 are clamped to 4 (impractical for screenshots).
     #[serde(default = "default_avif_speed")]
     pub speed: u8,
 }

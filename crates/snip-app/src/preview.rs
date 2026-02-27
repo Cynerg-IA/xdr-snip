@@ -22,11 +22,14 @@ use windows::Win32::Graphics::Gdi::{
     PAINTSTRUCT, SRCCOPY, TRANSPARENT,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, GetClientRect, GetCursorPos, KillTimer,
-    RegisterClassW, SetTimer, SetWindowPos, ShowWindow, HWND_TOPMOST, SWP_NOACTIVATE,
-    SWP_NOMOVE, SWP_NOSIZE, SW_SHOWNOACTIVATE, WNDCLASSW, WM_DESTROY, WM_ERASEBKGND,
-    WM_LBUTTONDOWN, WM_PAINT, WM_TIMER, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    RegisterClassW, SetTimer, SetWindowPos, ShowWindow, HWND_TOPMOST, SW_SHOWNORMAL,
+    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_SHOWNOACTIVATE, WNDCLASSW, WM_DESTROY,
+    WM_ERASEBKGND, WM_LBUTTONDOWN, WM_PAINT, WM_RBUTTONDOWN, WM_TIMER, WS_EX_TOOLWINDOW,
+    WS_EX_TOPMOST,
+    WS_POPUP,
 };
 
 /// Maximum thumbnail width in pixels.
@@ -39,7 +42,7 @@ const PREVIEW_MAX_H: u32 = 300;
 const PREVIEW_MIN_W: i32 = 280;
 
 /// Duration the preview stays visible (milliseconds).
-const PREVIEW_DURATION_MS: u32 = 4000;
+const PREVIEW_DURATION_MS: u32 = 5000;
 
 /// Margin from the screen edge in pixels.
 const PREVIEW_MARGIN: i32 = 16;
@@ -91,6 +94,9 @@ static mut INFO_TEXT: [u16; 512] = [0u16; 512];
 /// Length of INFO_TEXT in u16 code units (not including null terminator).
 static mut INFO_TEXT_LEN: i32 = 0;
 
+/// Wide-string buffer for the captured file path (used to open on click).
+static mut FILE_PATH: [u16; 512] = [0u16; 512];
+
 // ======================== PUBLIC API ========================
 
 /// Shows a combined thumbnail preview + notification popup after capture.
@@ -139,6 +145,7 @@ pub fn show_preview(jpeg_path: &Path, copied_to_clipboard: bool) -> Result<(), S
     }
     text.push_str(&format!("\n{}", jpeg_path.display()));
     store_info_text(&text);
+    store_file_path(&jpeg_path.to_string_lossy());
 
     // Window dimensions: thumbnail + text area + borders
     let win_w = (tw as i32 + BORDER_PX * 2).max(PREVIEW_MIN_W);
@@ -267,6 +274,18 @@ fn store_info_text(text: &str) {
         INFO_TEXT_LEN = copy_len as i32;
     }
     debug!("store_info_text: {} chars: '{}'", text.len(), text);
+}
+
+/// Stores a file path as a null-terminated wide string in the static FILE_PATH buffer.
+fn store_file_path(path: &str) {
+    unsafe {
+        let wide: Vec<u16> = path.encode_utf16().collect();
+        let buf_ptr = ptr::addr_of_mut!(FILE_PATH) as *mut u16;
+        let copy_len = wide.len().min(511);
+        ptr::copy_nonoverlapping(wide.as_ptr(), buf_ptr, copy_len);
+        *buf_ptr.add(copy_len) = 0; // null terminator
+    }
+    debug!("store_file_path: '{}'", path);
 }
 
 /// Frees the heap-allocated thumbnail pixel buffer.
@@ -441,15 +460,38 @@ unsafe extern "system" fn preview_wndproc(
         }
 
         WM_LBUTTONDOWN => {
-            debug!("preview_wndproc: clicked, dismissing");
+            debug!("preview_wndproc: clicked, opening file and dismissing");
+
+            // Open the captured file in the default image viewer
+            let path_ptr = ptr::addr_of!(FILE_PATH) as *const u16;
+            if *path_ptr != 0 {
+                ShellExecuteW(
+                    None,
+                    w!("open"),
+                    windows::core::PCWSTR(path_ptr),
+                    None,
+                    None,
+                    SW_SHOWNORMAL,
+                );
+            }
+
+            let _ = KillTimer(Some(hwnd), TIMER_ID_CLOSE);
+            let _ = DestroyWindow(hwnd);
+            LRESULT(0)
+        }
+
+        WM_RBUTTONDOWN => {
+            // Right-click dismisses without opening the file
+            debug!("preview_wndproc: right-clicked, dismissing");
             let _ = KillTimer(Some(hwnd), TIMER_ID_CLOSE);
             let _ = DestroyWindow(hwnd);
             LRESULT(0)
         }
 
         WM_DESTROY => {
-            // Free the thumbnail pixel buffer
+            // Free the thumbnail pixel buffer and clear stored path
             free_thumb_data();
+            *(ptr::addr_of_mut!(FILE_PATH) as *mut u16) = 0;
             PREVIEW_HWND = HWND(ptr::null_mut());
             // Do NOT call PostQuitMessage — this is not the main app window
             LRESULT(0)

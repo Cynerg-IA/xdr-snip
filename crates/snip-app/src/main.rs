@@ -196,7 +196,8 @@ fn handle_capture(cfg: &snip_types::Config, save_dir: &PathBuf) {
     );
 
     // Step 3: Choose pixel source — HDR frame if available, else GDI fallback
-    let pixels_rgb = if let Some(frame) = hdr_frames.get(&selection.hmonitor) {
+    let hdr_frame = hdr_frames.get(&selection.hmonitor);
+    let pixels_rgb = if let Some(frame) = hdr_frame {
         info!(
             "handle_capture: using WinRT HDR pixels ({}x{}, hdr={})",
             frame.width, frame.height, frame.is_hdr
@@ -218,37 +219,56 @@ fn handle_capture(cfg: &snip_types::Config, save_dir: &PathBuf) {
         pixels_rgb.len(), region.w, region.h
     );
 
-    // Step 4: Generate output path
+    // Step 3b: If format preserves HDR and we have HDR data, extract raw pixels
+    let raw_hdr = if cfg.capture.format.preserves_hdr() {
+        if let Some(frame) = hdr_frame {
+            if frame.is_hdr {
+                debug!("handle_capture: extracting raw HDR data for {}", cfg.capture.format);
+                Some(capture::extract_hdr_region_raw(frame, &selection.vscreen_region))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    // Step 4: Generate output path with format-specific extension
     let filename = config::generate_filename(&cfg.capture.filename_pattern);
-    let output_path = save_dir.join(format!("{}.jpg", filename));
+    let ext = cfg.capture.format.extension();
+    let output_path = save_dir.join(format!("{}.{}", filename, ext));
 
     debug!(
-        "handle_capture: output_path={}",
-        output_path.display()
+        "handle_capture: output_path={} (format={})",
+        output_path.display(), cfg.capture.format
     );
 
-    // Step 5: Encode as JPEG
+    // Step 5: Encode in configured format
     if cfg.behavior.save_to_file {
         if pixels_rgb.is_empty() {
             error!("handle_capture: no pixels from either HDR or GDI source");
             return;
         }
 
-        if let Err(e) = capture::encode_jpeg(
+        if let Err(e) = capture::encode_image(
             &pixels_rgb,
             region.w,
             region.h,
-            cfg.capture.quality,
+            cfg.capture.format,
+            &cfg.capture.format_options,
             &output_path,
+            raw_hdr.as_ref(),
         ) {
-            error!("handle_capture: JPEG encode failed: {}", e);
+            error!("handle_capture: {} encode failed: {}", cfg.capture.format, e);
             return;
         }
     }
 
-    // Step 6: Copy to clipboard
+    // Step 6: Copy to clipboard (always use the RGB pixels directly)
     let clipboard_ok = if cfg.behavior.copy_to_clipboard {
-        match clipboard::copy_to_clipboard(&output_path) {
+        match clipboard::copy_to_clipboard_pixels(&pixels_rgb, region.w, region.h) {
             Ok(()) => true,
             Err(e) => {
                 warn!("handle_capture: clipboard copy failed: {}", e);

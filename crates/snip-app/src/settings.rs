@@ -156,8 +156,8 @@ const SECTION_SPACE: i32 = 14;
 /// Vertical spacing between label and its control.
 const LABEL_GAP: i32 = 4;
 
-/// Minimum JPEG quality (below 50 = visible artifacts on text).
-const JPEG_QUALITY_MIN: i32 = 50;
+/// Minimum JPEG quality. JPEG is fast enough that 25 is practical.
+const JPEG_QUALITY_MIN: i32 = 25;
 
 /// Maximum JPEG quality.
 const JPEG_QUALITY_MAX: i32 = 100;
@@ -527,11 +527,11 @@ unsafe fn handle_save(hwnd: HWND) {
             },
             webp: WebPOptions {
                 lossless: webp_lossless,
-                quality: webp_quality.clamp(0.0, 100.0),
+                quality: webp_quality.clamp(25.0, 100.0),
             },
             avif: AvifOptions {
-                quality: avif_quality.clamp(1, 100),
-                speed: avif_speed.clamp(1, 10),
+                quality: avif_quality.clamp(50, 100),
+                speed: avif_speed.clamp(4, 10),
             },
             tiff: TiffOptions {
                 compression: tiff_compression,
@@ -811,7 +811,7 @@ unsafe fn create_webp_controls(
     y += CTRL_H + SECTION_SPACE;
 
     let ql = create_child(
-        hwnd, hi, w!("STATIC"), "Quality (0\u{2013}100):",
+        hwnd, hi, w!("STATIC"), "Quality (25\u{2013}100):",
         MARGIN, y, inner_w, 20, ID_WEBP_QUALITY_LABEL,
     );
     send_font(ql, font);
@@ -821,9 +821,11 @@ unsafe fn create_webp_controls(
         hwnd, hi, w!("msctls_trackbar32"), "",
         MARGIN, y, inner_w, 34, ID_WEBP_QUALITY_SLIDER,
     );
-    let range_lparam = ((100u32) << 16 | 0u32) as isize;
+    // Minimum 25%: lower values produce unusable quality for screenshots
+    let range_lparam = ((100u32) << 16 | 25u32) as isize;
     SendMessageW(slider, TBM_SETRANGE, Some(WPARAM(1)), Some(LPARAM(range_lparam)));
-    SendMessageW(slider, TBM_SETPOS, Some(WPARAM(1)), Some(LPARAM(opts.quality as isize)));
+    let clamped_q = (opts.quality as isize).max(25);
+    SendMessageW(slider, TBM_SETPOS, Some(WPARAM(1)), Some(LPARAM(clamped_q)));
     y += 34 + 2;
 
     let vl = create_child(
@@ -846,7 +848,7 @@ unsafe fn create_avif_controls(
     let mut y = base_y;
 
     let ql = create_child(
-        hwnd, hi, w!("STATIC"), "Quality (1\u{2013}100):",
+        hwnd, hi, w!("STATIC"), "Quality (50\u{2013}100):",
         MARGIN, y, inner_w, 20, ID_AVIF_QUALITY_LABEL,
     );
     send_font(ql, font);
@@ -856,9 +858,11 @@ unsafe fn create_avif_controls(
         hwnd, hi, w!("msctls_trackbar32"), "",
         MARGIN, y, inner_w, 34, ID_AVIF_QUALITY_SLIDER,
     );
-    let range_lparam = ((100u32) << 16 | 1u32) as isize;
+    // Minimum 50: AVIF below 50 produces poor quality and is slow
+    let range_lparam = ((100u32) << 16 | 50u32) as isize;
     SendMessageW(slider, TBM_SETRANGE, Some(WPARAM(1)), Some(LPARAM(range_lparam)));
-    SendMessageW(slider, TBM_SETPOS, Some(WPARAM(1)), Some(LPARAM(opts.quality as isize)));
+    let clamped_q = (opts.quality as isize).max(50);
+    SendMessageW(slider, TBM_SETPOS, Some(WPARAM(1)), Some(LPARAM(clamped_q)));
     y += 34 + 2;
 
     let vl = create_child(
@@ -943,7 +947,7 @@ unsafe fn create_avif_advanced(
     let mut y = base_y;
 
     let sl = create_child(
-        hwnd, hi, w!("STATIC"), "Speed (1=slowest/best \u{2013} 10=fastest):",
+        hwnd, hi, w!("STATIC"), "Speed (4=slow/best \u{2013} 10=fastest):",
         MARGIN, y, inner_w, 20, ID_AVIF_SPEED_LABEL,
     );
     send_font(sl, font);
@@ -953,9 +957,11 @@ unsafe fn create_avif_advanced(
         hwnd, hi, w!("msctls_trackbar32"), "",
         MARGIN, y, inner_w, 34, ID_AVIF_SPEED_SLIDER,
     );
-    let speed_range = ((10u32) << 16 | 1u32) as isize;
+    // Range 4-10: speeds 1-3 are impractical (minutes per encode on large images)
+    let speed_range = ((10u32) << 16 | 4u32) as isize;
     SendMessageW(speed_slider, TBM_SETRANGE, Some(WPARAM(1)), Some(LPARAM(speed_range)));
-    SendMessageW(speed_slider, TBM_SETPOS, Some(WPARAM(1)), Some(LPARAM(opts.speed as isize)));
+    let clamped_speed = opts.speed.max(4) as isize;
+    SendMessageW(speed_slider, TBM_SETPOS, Some(WPARAM(1)), Some(LPARAM(clamped_speed)));
     y += 34 + 2;
 
     let svl = create_child(
@@ -1374,16 +1380,14 @@ fn png_compression_label(level: i32) -> String {
 /// Descriptive label for AVIF speed level.
 fn avif_speed_label(speed: i32) -> String {
     let desc = match speed {
-        1 => "slowest, best quality",
-        2..=3 => "slow, high quality",
-        4 => "balanced",
-        5..=6 => "fast",
-        7..=8 => "faster, lower quality",
+        4 => "slow, best quality",
+        5..=6 => "balanced",
+        7..=8 => "fast, lower quality",
         9..=10 => "fastest, lowest quality",
         _ => "balanced",
     };
 
-    if speed == 4 {
+    if speed == 6 {
         format!("{} \u{00B7} {} \u{00B7} Recommended", speed, desc)
     } else {
         format!("{} \u{00B7} {}", speed, desc)

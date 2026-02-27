@@ -274,7 +274,7 @@ fn handle_capture(cfg: &snip_types::Config, save_dir: &PathBuf) {
 ///
 /// Logs to `%APPDATA%/xdr-snip/xdr-snip.log` since this is a GUI app with no
 /// console. The log file is truncated on each launch.
-/// Override level with `RUST_LOG=debug` or `RUST_LOG=hdr_snip=trace`.
+/// Override level with `RUST_LOG=debug` or `RUST_LOG=xdr_snip=trace`.
 fn init_tracing() {
     use std::fs::OpenOptions;
     use std::sync::Mutex;

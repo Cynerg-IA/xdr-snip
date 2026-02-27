@@ -32,7 +32,8 @@ use windows::Win32::UI::Shell::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, GetDlgItem, GetSystemMetrics,
-    GetWindowLongW, GetWindowTextLengthW, GetWindowTextW, RegisterClassW, SendMessageW,
+    GetWindowLongW, GetWindowTextLengthW, GetWindowTextW, MoveWindow, RegisterClassW,
+    SendMessageW,
     SetForegroundWindow, SetWindowLongW, SetWindowTextW, ShowWindow, GWL_STYLE, HMENU,
     SM_CXSCREEN, SM_CYSCREEN, SW_HIDE, SW_SHOW, WINDOW_EX_STYLE, WM_CLOSE, WM_COMMAND,
     WM_CREATE, WM_CTLCOLORSTATIC, WM_DESTROY, WM_HSCROLL, WM_SETFONT, WNDCLASSW, WS_BORDER,
@@ -132,6 +133,9 @@ const ID_TIFF_COMPRESS_COMBO: i32 = 151;
 const ID_EXR_COMPRESS_LABEL: i32 = 160;
 const ID_EXR_COMPRESS_COMBO: i32 = 161;
 
+// --- Size estimate label ---
+const ID_SIZE_ESTIMATE: i32 = 180;
+
 // ======================== LAYOUT CONSTANTS ========================
 
 /// Dialog width in pixels.
@@ -164,8 +168,9 @@ const DIALOG_BG: u32 = 0x00F0F0F0;
 /// Y position where format-specific options start.
 const OPTIONS_Y_START: i32 = 148;
 
-/// Y position where advanced controls start (below standard controls).
-const ADVANCED_Y_START: i32 = 280;
+/// Y position where advanced controls start (right below standard controls).
+/// Standard option sections are ~80px tall, so 148 + 90 = 238.
+const ADVANCED_Y_START: i32 = 238;
 
 // ======================== STATIC STATE ========================
 
@@ -361,6 +366,15 @@ unsafe extern "system" fn settings_wndproc(
                         show_control(hwnd, ID_WEBP_QUALITY_SLIDER, show);
                         show_control(hwnd, ID_WEBP_QUALITY_VALUE, show);
                     }
+                    update_size_estimate(hwnd, OutputFormat::WebP);
+                }
+
+                ID_TIFF_COMPRESS_COMBO if notification == CBN_SELCHANGE => {
+                    update_size_estimate(hwnd, OutputFormat::Tiff);
+                }
+
+                ID_EXR_COMPRESS_COMBO if notification == CBN_SELCHANGE => {
+                    update_size_estimate(hwnd, OutputFormat::OpenExr);
                 }
 
                 ID_ADVANCED_CHECK => {
@@ -651,6 +665,13 @@ unsafe fn create_controls(hwnd: HWND) {
     create_avif_advanced(hwnd, hinstance, font, ay, inner_w, &opts.avif);
     create_tiff_controls(hwnd, hinstance, font, ay, inner_w, &opts.tiff);
     create_exr_controls(hwnd, hinstance, font, ay, inner_w, &opts.exr);
+
+    // Size estimate label — positioned dynamically by show_format_options()
+    let est = create_child(
+        hwnd, hinstance, w!("STATIC"), "",
+        MARGIN, OPTIONS_Y_START, inner_w, 20, ID_SIZE_ESTIMATE,
+    );
+    send_font(est, font);
 
     // Show standard options for the current format, hide all others
     show_format_options(hwnd, format);
@@ -1071,6 +1092,22 @@ unsafe fn show_format_options(hwnd: HWND, format: OutputFormat) {
     show_control(hwnd, ID_EXR_COMPRESS_COMBO, exr_adv);
 
     // BMP and QOI have no configurable options
+
+    // ─── Reposition controls to eliminate gaps ───
+    let inner_w = DLG_W - MARGIN * 2;
+
+    // For formats with no standard controls, move advanced to top of options area
+    if format == OutputFormat::Tiff && advanced {
+        move_control_y(hwnd, ID_TIFF_COMPRESS_LABEL, OPTIONS_Y_START, inner_w, 20);
+        move_control_y(hwnd, ID_TIFF_COMPRESS_COMBO, OPTIONS_Y_START + 24, inner_w, 150);
+    }
+    if format == OutputFormat::OpenExr && advanced {
+        move_control_y(hwnd, ID_EXR_COMPRESS_LABEL, OPTIONS_Y_START, inner_w, 20);
+        move_control_y(hwnd, ID_EXR_COMPRESS_COMBO, OPTIONS_Y_START + 24, inner_w, 250);
+    }
+
+    // ─── Update size estimate ───
+    update_size_estimate(hwnd, format);
 }
 
 /// Shows or hides a control by its ID.
@@ -1081,6 +1118,15 @@ unsafe fn show_control(
 ) {
     if let Ok(ctrl) = GetDlgItem(Some(hwnd), id) {
         let _ = ShowWindow(ctrl, show);
+    }
+}
+
+/// Repositions a control to a new Y coordinate at MARGIN x-offset.
+///
+/// Win32 `MoveWindow` sets both position and size, so width/height must be provided.
+unsafe fn move_control_y(parent: HWND, id: i32, new_y: i32, w: i32, h: i32) {
+    if let Ok(ctrl) = GetDlgItem(Some(parent), id) {
+        let _ = MoveWindow(ctrl, MARGIN, new_y, w, h, true);
     }
 }
 
@@ -1131,6 +1177,147 @@ unsafe fn update_slider_labels(hwnd: HWND) {
     ) {
         let pos = SendMessageW(slider, TBM_GETPOS, None, None).0 as i32;
         set_text(label, &avif_speed_label(pos));
+    }
+
+    // Update size estimate (reads current format from combo)
+    if let Ok(combo) = GetDlgItem(Some(hwnd), ID_FORMAT_COMBO) {
+        let idx = SendMessageW(combo, CB_GETCURSEL, None, None).0 as usize;
+        if idx < OutputFormat::ALL.len() {
+            update_size_estimate(hwnd, OutputFormat::ALL[idx]);
+        }
+    }
+}
+
+// ======================== SIZE ESTIMATE ========================
+
+/// Updates the 1080p size estimate label position and text.
+///
+/// Reads current slider/combo values to calculate the estimate, then
+/// repositions the label below the last visible control for the format.
+unsafe fn update_size_estimate(hwnd: HWND, format: OutputFormat) {
+    let inner_w = DLG_W - MARGIN * 2;
+    let advanced = is_advanced(hwnd);
+
+    // Read format-specific parameters for the estimate
+    let (param1, param2) = match format {
+        OutputFormat::Jpeg => (read_slider(hwnd, ID_JPEG_QUALITY_SLIDER, 85), 0),
+        OutputFormat::Png => (read_slider(hwnd, ID_PNG_COMPRESS_SLIDER, 6), 0),
+        OutputFormat::WebP => {
+            let quality = read_slider(hwnd, ID_WEBP_QUALITY_SLIDER, 80);
+            let lossless = read_combo(hwnd, ID_WEBP_MODE_COMBO, 0) as i32;
+            (quality, lossless)
+        }
+        OutputFormat::Avif => (read_slider(hwnd, ID_AVIF_QUALITY_SLIDER, 80), 0),
+        OutputFormat::Tiff => (read_combo(hwnd, ID_TIFF_COMPRESS_COMBO, 1) as i32, 0),
+        OutputFormat::OpenExr => (read_combo(hwnd, ID_EXR_COMPRESS_COMBO, 3) as i32, 0),
+        _ => (0, 0),
+    };
+
+    let text = size_estimate_text(format, param1, param2);
+
+    // Position after the last visible control for this format
+    let estimate_y = match format {
+        OutputFormat::Jpeg | OutputFormat::Png => {
+            if advanced { ADVANCED_Y_START + 60 } else { OPTIONS_Y_START + 90 }
+        }
+        OutputFormat::Avif => {
+            if advanced { ADVANCED_Y_START + 90 } else { OPTIONS_Y_START + 90 }
+        }
+        OutputFormat::WebP => {
+            let is_lossy = read_combo(hwnd, ID_WEBP_MODE_COMBO, 0) == 0;
+            if is_lossy { OPTIONS_Y_START + 154 } else { OPTIONS_Y_START + 60 }
+        }
+        OutputFormat::Tiff | OutputFormat::OpenExr => {
+            if advanced { OPTIONS_Y_START + 60 } else { OPTIONS_Y_START }
+        }
+        _ => OPTIONS_Y_START, // BMP, QOI — no controls, estimate at top
+    };
+
+    move_control_y(hwnd, ID_SIZE_ESTIMATE, estimate_y, inner_w, 20);
+
+    if let Ok(ctrl) = GetDlgItem(Some(hwnd), ID_SIZE_ESTIMATE) {
+        set_text(ctrl, &text);
+        let _ = ShowWindow(ctrl, SW_SHOW);
+    }
+}
+
+/// Estimated 1080p file size for the given format and settings.
+///
+/// `param1` is quality (JPEG/WebP/AVIF), compression level (PNG), or
+/// compression index (TIFF/EXR). `param2` is 1 for WebP lossless, 0 otherwise.
+/// Estimates assume typical mixed-content 1920x1080 screenshots.
+fn size_estimate_text(format: OutputFormat, param1: i32, param2: i32) -> String {
+    let kb: u32 = match format {
+        OutputFormat::Jpeg => match param1 {
+            50..=55 => 120,
+            56..=60 => 170,
+            61..=65 => 200,
+            66..=70 => 250,
+            71..=75 => 300,
+            76..=80 => 380,
+            81..=85 => 450,
+            86..=90 => 600,
+            91..=95 => 900,
+            96..=100 => 2000,
+            _ => 450,
+        },
+        OutputFormat::Png => match param1 {
+            0 => 6000,
+            1..=3 => 4000,
+            4..=6 => 3000,
+            7..=9 => 2500,
+            _ => 3000,
+        },
+        OutputFormat::WebP => {
+            if param2 == 1 {
+                2500 // lossless
+            } else {
+                match param1 {
+                    0..=30 => 50,
+                    31..=50 => 100,
+                    51..=70 => 150,
+                    71..=80 => 200,
+                    81..=90 => 350,
+                    91..=95 => 600,
+                    96..=100 => 1500,
+                    _ => 200,
+                }
+            }
+        }
+        OutputFormat::Avif => match param1 {
+            1..=30 => 40,
+            31..=50 => 80,
+            51..=70 => 130,
+            71..=80 => 200,
+            81..=90 => 400,
+            91..=95 => 700,
+            96..=100 => 1000,
+            _ => 200,
+        },
+        OutputFormat::Tiff => match param1 {
+            0 => 6000,  // None
+            1 => 3500,  // LZW
+            2 => 3000,  // Deflate
+            _ => 3500,
+        },
+        OutputFormat::Bmp => 6000,
+        OutputFormat::Qoi => 3500,
+        OutputFormat::OpenExr => match param1 {
+            0 => 12000, // None
+            1 => 8000,  // RLE
+            2 => 5000,  // ZIP
+            3 => 5000,  // ZIP16
+            4 => 4000,  // PIZ
+            5 => 4000,  // PXR24
+            6 => 3000,  // B44
+            _ => 5000,
+        },
+    };
+
+    if kb >= 1000 {
+        format!("1080p estimate: ~{:.1} MB", kb as f64 / 1000.0)
+    } else {
+        format!("1080p estimate: ~{} KB", kb)
     }
 }
 

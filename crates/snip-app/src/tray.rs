@@ -61,7 +61,7 @@ pub fn create_tray() -> Result<(TrayIcon, String, String, String), SnipError> {
 
     let tray = TrayIconBuilder::new()
         .with_menu(Box::new(menu))
-        .with_tooltip("HDR Snip — Press PrintScreen to capture")
+        .with_tooltip("XDR Snip — Press PrintScreen to capture")
         .with_icon(icon)
         .build()
         .map_err(|e| {

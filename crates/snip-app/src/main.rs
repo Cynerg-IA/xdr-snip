@@ -1,4 +1,4 @@
-//! # HDR Snip — main entry point
+//! # XDR Snip — main entry point
 //!
 //! Sets DPI awareness, initializes logging, loads config, creates the system
 //! tray, registers the global hotkey, and runs a Win32 message loop that
@@ -58,7 +58,7 @@ fn main() {
     // 2. Logging
     init_tracing();
 
-    info!("hdr-snip starting");
+    info!("xdr-snip starting");
 
     // 3. Run the application; report top-level errors
     if let Err(e) = run() {
@@ -66,7 +66,7 @@ fn main() {
         std::process::exit(1);
     }
 
-    info!("hdr-snip exiting cleanly");
+    info!("xdr-snip exiting cleanly");
 }
 
 /// Core application logic, separated from `main` for clean error propagation.
@@ -186,7 +186,7 @@ fn handle_capture(cfg: &snip_types::Config, save_dir: &PathBuf) {
         output_path.display()
     );
 
-    // Step 3: Capture via external helper
+    // Step 3: Capture via Windows.Graphics.Capture (in-process)
     if cfg.behavior.save_to_file {
         if let Err(e) =
             capture::capture_region(&region, monitor, cfg.capture.quality, &output_path)
@@ -224,7 +224,7 @@ fn handle_capture(cfg: &snip_types::Config, save_dir: &PathBuf) {
 
 /// Initializes the `tracing` subscriber with file output.
 ///
-/// Logs to `%APPDATA%/hdr-snip/hdr-snip.log` since this is a GUI app with no
+/// Logs to `%APPDATA%/xdr-snip/xdr-snip.log` since this is a GUI app with no
 /// console. The log file is truncated on each launch.
 /// Override level with `RUST_LOG=debug` or `RUST_LOG=hdr_snip=trace`.
 fn init_tracing() {
@@ -237,11 +237,11 @@ fn init_tracing() {
 
     // Write logs to file — GUI app has no console
     let log_dir = dirs::config_dir()
-        .map(|d| d.join("hdr-snip"))
+        .map(|d| d.join("xdr-snip"))
         .unwrap_or_else(|| std::path::PathBuf::from("."));
     let _ = std::fs::create_dir_all(&log_dir);
 
-    let log_path = log_dir.join("hdr-snip.log");
+    let log_path = log_dir.join("xdr-snip.log");
     match OpenOptions::new()
         .create(true)
         .write(true)

@@ -95,7 +95,7 @@ pub fn show_capture_notification(
     nid.hIcon = icon;
 
     // Set tooltip text
-    set_wide_string(&mut nid.szTip, "HDR Snip");
+    set_wide_string(&mut nid.szTip, "XDR Snip");
 
     // Set balloon title and body
     set_wide_string(&mut nid.szInfoTitle, "Screenshot saved");

@@ -1,6 +1,6 @@
 //! Configuration loading and path utilities.
 //!
-//! Reads `config.toml` from `%APPDATA%/hdr-snip/`, creating it with defaults
+//! Reads `config.toml` from `%APPDATA%/xdr-snip/`, creating it with defaults
 //! if the file or directory does not yet exist.
 
 use std::fs;
@@ -11,12 +11,12 @@ use snip_types::{Config, SnipError};
 use tracing::{debug, info, warn};
 
 /// Name of the config directory under `%APPDATA%`.
-const APP_DIR_NAME: &str = "hdr-snip";
+const APP_DIR_NAME: &str = "xdr-snip";
 
 /// Config file name inside the app directory.
 const CONFIG_FILE_NAME: &str = "config.toml";
 
-/// Loads the application configuration from `%APPDATA%/hdr-snip/config.toml`.
+/// Loads the application configuration from `%APPDATA%/xdr-snip/config.toml`.
 ///
 /// If the file does not exist, a default config is written to disk and returned.
 /// Returns [`SnipError::Config`] if the file exists but cannot be parsed.
@@ -116,7 +116,7 @@ pub fn generate_filename(pattern: &str) -> String {
 
 // ======================== INTERNAL HELPERS ========================
 
-/// Resolves the config directory (`%APPDATA%/hdr-snip`), creating it if needed.
+/// Resolves the config directory (`%APPDATA%/xdr-snip`), creating it if needed.
 fn resolve_config_dir() -> Result<PathBuf, SnipError> {
     let base = dirs::config_dir().ok_or_else(|| {
         SnipError::Config("cannot determine %APPDATA% directory".to_string())

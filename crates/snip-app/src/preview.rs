@@ -15,14 +15,15 @@ use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, POI
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, BitBlt, CreateCompatibleDC, CreateDIBSection, CreateSolidBrush, DeleteDC,
     DeleteObject, EndPaint, FillRect, GetDC, GetMonitorInfoW, MonitorFromPoint, ReleaseDC,
-    SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HDC, MONITORINFO,
-    MONITOR_DEFAULTTOPRIMARY, PAINTSTRUCT, SRCCOPY,
+    SelectObject, UpdateWindow, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HDC,
+    MONITORINFO, MONITOR_DEFAULTTOPRIMARY, PAINTSTRUCT, SRCCOPY,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, GetClientRect, KillTimer, RegisterClassW,
-    SetTimer, ShowWindow, SW_SHOWNOACTIVATE, WNDCLASSW, WM_DESTROY, WM_ERASEBKGND,
-    WM_LBUTTONDOWN, WM_PAINT, WM_TIMER, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    SetTimer, SetWindowPos, ShowWindow, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    SW_SHOWNOACTIVATE, WNDCLASSW, WM_DESTROY, WM_ERASEBKGND, WM_LBUTTONDOWN, WM_PAINT,
+    WM_TIMER, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 
 /// Maximum thumbnail width in pixels.
@@ -131,8 +132,22 @@ pub fn show_preview(jpeg_path: &Path) -> Result<(), SnipError> {
     }
     .map_err(|e| SnipError::Notification(format!("CreateWindowExW (preview): {}", e)))?;
 
-    // Show without stealing focus from the active application
+    // Show without stealing focus, force topmost z-order, and paint immediately
     let _ = unsafe { ShowWindow(hwnd, SW_SHOWNOACTIVATE) };
+    let _ = unsafe {
+        SetWindowPos(
+            hwnd,
+            Some(HWND_TOPMOST),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        )
+    };
+    // UpdateWindow sends WM_PAINT synchronously — ensures the thumbnail is
+    // painted before we return, rather than waiting for the next message loop
+    let _ = unsafe { UpdateWindow(hwnd) };
 
     // Set auto-close timer
     unsafe {
@@ -243,16 +258,23 @@ fn create_thumb_dc(rgb: &image::RgbImage, tw: u32, th: u32) -> Result<(), SnipEr
 
 // ======================== POSITIONING ========================
 
-/// Returns (x, y) for the preview window: bottom-right of the primary
-/// monitor's work area, offset by [`PREVIEW_MARGIN`].
+/// Returns (x, y) for the preview window: bottom-right of the monitor
+/// where the cursor currently is, offset by [`PREVIEW_MARGIN`].
+///
+/// Uses the cursor position (not a hardcoded origin) so the preview appears
+/// on the same monitor the user was interacting with.
 fn get_preview_position(win_w: i32, win_h: i32) -> (i32, i32) {
+    // Get the cursor position to determine which monitor to use
+    let mut cursor = POINT::default();
+    let _ = unsafe { windows::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut cursor) };
+
     let mut mi = MONITORINFO {
         cbSize: mem::size_of::<MONITORINFO>() as u32,
         ..Default::default()
     };
 
     unsafe {
-        let hmon = MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY);
+        let hmon = MonitorFromPoint(cursor, MONITOR_DEFAULTTOPRIMARY);
         let _ = GetMonitorInfoW(hmon, &mut mi);
     }
 
@@ -260,9 +282,9 @@ fn get_preview_position(win_w: i32, win_h: i32) -> (i32, i32) {
     let x = work.right - win_w - PREVIEW_MARGIN;
     let y = work.bottom - win_h - PREVIEW_MARGIN;
 
-    debug!(
-        "get_preview_position: work_area=({},{})→({},{}), pos=({},{})",
-        work.left, work.top, work.right, work.bottom, x, y
+    info!(
+        "get_preview_position: cursor=({},{}), work_area=({},{})→({},{}), pos=({},{})",
+        cursor.x, cursor.y, work.left, work.top, work.right, work.bottom, x, y
     );
 
     (x, y)

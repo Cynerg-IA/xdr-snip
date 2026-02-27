@@ -27,8 +27,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, GetClientRect, GetCursorPos, KillTimer,
     RegisterClassW, SetTimer, SetWindowPos, ShowWindow, HWND_TOPMOST, SW_SHOWNORMAL,
     SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_SHOWNOACTIVATE, WNDCLASSW, WM_DESTROY,
-    WM_ERASEBKGND, WM_LBUTTONDOWN, WM_PAINT, WM_RBUTTONDOWN, WM_TIMER, WS_EX_TOOLWINDOW,
-    WS_EX_TOPMOST,
+    WM_CONTEXTMENU, WM_ERASEBKGND, WM_LBUTTONDOWN, WM_PAINT, WM_RBUTTONDOWN, WM_TIMER,
+    WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
     WS_POPUP,
 };
 
@@ -485,6 +485,11 @@ unsafe extern "system" fn preview_wndproc(
             debug!("preview_wndproc: right-clicked, dismissing");
             let _ = KillTimer(Some(hwnd), TIMER_ID_CLOSE);
             let _ = DestroyWindow(hwnd);
+            LRESULT(0)
+        }
+
+        WM_CONTEXTMENU => {
+            // Suppress the default context menu — right-click is handled above
             LRESULT(0)
         }
 

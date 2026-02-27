@@ -1,5 +1,14 @@
 # XDR Snip
 
+[![Windows 11](https://img.shields.io/badge/Windows-11-0078D4?logo=windows11)](https://github.com/db-cynerg-ia/xdr-snip)
+[![Rust](https://img.shields.io/badge/Rust-stable-DEA584?logo=rust)](https://www.rust-lang.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/db-cynerg-ia/xdr-snip)](https://github.com/db-cynerg-ia/xdr-snip/releases)
+
+<p align="center">
+  <img src="assets/social-preview.png" alt="XDR Snip" width="720">
+</p>
+
 Lightweight screenshot tool for Windows 11. Select a region on a frozen screen, get a small JPEG — ready to paste into Claude, browsers, or any app.
 
 ## Why
@@ -20,11 +29,10 @@ Lightweight screenshot tool for Windows 11. Select a region on a frozen screen, 
 - **Single exe** — ~11MB, no installer, no dependencies, no .NET runtime
 - **DPI-aware** — per-monitor DPI v2, correct coordinates on mixed-DPI setups
 
-## Screenshot
+## Demo
 
-```
-Press PrintScreen → screen freezes with dark overlay → drag region → release
-```
+<!-- Demo GIF: see assets/DEMO-RECORDING-GUIDE.md -->
+> **Press PrintScreen** → screen freezes with dark overlay → **drag region** → release
 
 The selected region appears at full brightness with a cyan border. Escape or right-click to cancel.
 

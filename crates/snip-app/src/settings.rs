@@ -335,11 +335,14 @@ unsafe fn create_controls(hwnd: HWND) {
     let hinstance: HINSTANCE = GetModuleHandleW(None).unwrap_or_default().into();
     let font = GetStockObject(DEFAULT_GUI_FONT);
 
-    // Read current values from the stored config
+    // Read current values from the stored config.
+    // SAFETY: borrow via &* instead of read() — read() does a bitwise copy of
+    // Option<Config> (which owns heap Strings), then drops the copy, freeing
+    // the String data while EDIT_CONFIG still holds the same pointers → UAF.
     let (save_dir, quality) = {
-        let cfg = ptr::addr_of!(EDIT_CONFIG).read();
+        let cfg = &*ptr::addr_of!(EDIT_CONFIG);
         match cfg {
-            Some(ref c) => (c.capture.save_dir.clone(), c.capture.quality),
+            Some(c) => (c.capture.save_dir.clone(), c.capture.quality),
             None => ("~/Pictures/XDR-Snips".to_string(), 85),
         }
     };

@@ -123,6 +123,12 @@ Single Rust binary using the `windows` crate for Win32/GDI and WinRT APIs:
 
 ## Release History
 
+### v0.4.1 — Non-blocking settings + Standard/Advanced UX (2026-02-27)
+
+- **Non-blocking settings** — settings dialog no longer freezes the app; screenshots can be taken while settings is open
+- **Standard/Advanced toggle** — checkbox hides advanced options (chroma subsampling, PNG filters, AVIF speed, TIFF/EXR compression) by default; regular users see only quality/compression sliders
+- **Duplicate window guard** — clicking "Settings" while already open is a no-op
+
 ### v0.4.0 — Multi-format output (2026-02-27)
 
 - **8 output formats** — JPEG, PNG, WebP (lossy + lossless), AVIF, TIFF, BMP, QOI, OpenEXR

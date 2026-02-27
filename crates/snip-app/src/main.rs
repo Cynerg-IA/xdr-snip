@@ -137,11 +137,27 @@ fn run() -> Result<(), SnipError> {
                 open_folder(&save_dir);
             } else if clicked_id == tray_ids.settings {
                 debug!("main: menu -> Settings");
-                handle_settings(&mut cfg, &mut save_dir);
+                if settings::is_open() {
+                    debug!("main: settings already open, ignoring");
+                } else if let Err(e) = settings::open_settings(&cfg) {
+                    warn!("main: failed to open settings: {}", e);
+                }
             } else if clicked_id == tray_ids.quit {
                 info!("main: menu -> Quit");
                 break;
             }
+        }
+
+        // Check for settings dialog result (non-blocking)
+        if let Some(new_cfg) = settings::take_result() {
+            info!("main: settings saved, hot-reloading config");
+            let new_dir = config::expand_tilde(&new_cfg.capture.save_dir);
+            if !new_dir.exists() {
+                info!("main: creating new save directory: {}", new_dir.display());
+                let _ = fs::create_dir_all(&new_dir);
+            }
+            save_dir = new_dir;
+            cfg = new_cfg;
         }
 
         // Yield CPU to avoid busy-spinning (~60 Hz poll rate)
@@ -352,32 +368,6 @@ fn open_folder(path: &PathBuf) {
     debug!("open_folder: opening {}", path.display());
     shell_open(&path.to_string_lossy());
     info!("open_folder: dispatched for {}", path.display());
-}
-
-/// Opens the settings dialog and hot-reloads config if the user saves.
-fn handle_settings(cfg: &mut snip_types::Config, save_dir: &mut PathBuf) {
-    match settings::open_settings(cfg) {
-        Ok(Some(new_cfg)) => {
-            info!("handle_settings: config updated, hot-reloading");
-            // Update the save directory if it changed
-            let new_dir = config::expand_tilde(&new_cfg.capture.save_dir);
-            if !new_dir.exists() {
-                info!(
-                    "handle_settings: creating new save directory: {}",
-                    new_dir.display()
-                );
-                let _ = fs::create_dir_all(&new_dir);
-            }
-            *save_dir = new_dir;
-            *cfg = new_cfg;
-        }
-        Ok(None) => {
-            debug!("handle_settings: user cancelled");
-        }
-        Err(e) => {
-            warn!("handle_settings: settings dialog failed: {}", e);
-        }
-    }
 }
 
 /// Opens a path via `ShellExecuteW` with the "open" verb.

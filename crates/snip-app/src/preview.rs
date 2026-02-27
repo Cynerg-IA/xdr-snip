@@ -54,7 +54,7 @@ const BORDER_PX: i32 = 1;
 const TEXT_PADDING: i32 = 8;
 
 /// Height reserved for the text area below the thumbnail.
-const TEXT_AREA_H: i32 = 56;
+const TEXT_AREA_H: i32 = 72;
 
 /// Background color — dark charcoal (BGR).
 const BG_COLOR: u32 = 0x00222222;
@@ -137,9 +137,7 @@ pub fn show_preview(jpeg_path: &Path, copied_to_clipboard: bool) -> Result<(), S
     if copied_to_clipboard {
         text.push_str(" | Copied");
     }
-    if let Some(name) = jpeg_path.file_name() {
-        text.push_str(&format!("\n{}", name.to_string_lossy()));
-    }
+    text.push_str(&format!("\n{}", jpeg_path.display()));
     store_info_text(&text);
 
     // Window dimensions: thumbnail + text area + borders

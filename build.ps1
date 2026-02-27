@@ -70,5 +70,5 @@ Write-Host "`n=== Build Complete ===" -ForegroundColor Cyan
 Write-Host "Output: $distDir"
 Get-ChildItem $distDir -Filter "*.exe" | ForEach-Object {
     $sizeMB = [math]::Round($_.Length / 1MB, 2)
-    Write-Host "  $($_.Name) — ${sizeMB} MB"
+    Write-Host "  $($_.Name) - ${sizeMB} MB"
 }

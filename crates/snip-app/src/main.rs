@@ -10,6 +10,7 @@
 mod capture;
 mod clipboard;
 mod config;
+mod hdr_capture;
 mod hotkey;
 mod overlay;
 mod preview;
@@ -156,13 +157,26 @@ fn run() -> Result<(), SnipError> {
 
 // ======================== CAPTURE WORKFLOW ========================
 
-/// Runs the full capture pipeline: overlay -> capture -> clipboard -> preview.
+/// Runs the full capture pipeline: HDR capture → overlay → encode → clipboard → preview.
 ///
-/// Errors are logged and displayed via preview popup — they do not crash the app.
+/// The dual-capture approach:
+/// 1. WinRT captures HDR frames per-monitor (may fail → empty map).
+/// 2. GDI BitBlt captures the frozen overlay display.
+/// 3. After region selection, HDR frame is preferred for output; GDI is fallback.
+///
+/// Errors are logged — they do not crash the app.
 fn handle_capture(cfg: &snip_types::Config, save_dir: &PathBuf) {
     info!("handle_capture: starting capture workflow");
 
-    // Step 1: Region selection overlay
+    // Step 1: WinRT HDR capture — grab all monitors before showing overlay.
+    // Returns empty map on failure; caller falls back to GDI pixels.
+    let hdr_frames = hdr_capture::capture_all_monitors();
+    debug!(
+        "handle_capture: WinRT captured {} monitor frame(s)",
+        hdr_frames.len()
+    );
+
+    // Step 2: Region selection overlay (GDI capture + frozen UI)
     let selection = match overlay::select_region() {
         Ok(Some(sel)) => sel,
         Ok(None) => {
@@ -176,13 +190,35 @@ fn handle_capture(cfg: &snip_types::Config, save_dir: &PathBuf) {
     };
 
     let region = selection.region;
-    let pixels_rgb = selection.pixels_rgb;
     info!(
-        "handle_capture: region={}, monitor={}, pixels={}bytes",
-        region, selection.monitor, pixels_rgb.len()
+        "handle_capture: region={}, monitor={}, hmonitor=0x{:X}",
+        region, selection.monitor, selection.hmonitor
     );
 
-    // Step 2: Generate output path
+    // Step 3: Choose pixel source — HDR frame if available, else GDI fallback
+    let pixels_rgb = if let Some(frame) = hdr_frames.get(&selection.hmonitor) {
+        info!(
+            "handle_capture: using WinRT HDR pixels ({}x{}, hdr={})",
+            frame.width, frame.height, frame.is_hdr
+        );
+        let hdr_pixels = capture::extract_hdr_region(frame, &selection.vscreen_region);
+        if hdr_pixels.is_empty() {
+            warn!("handle_capture: HDR extraction returned empty, falling back to GDI");
+            selection.pixels_rgb
+        } else {
+            hdr_pixels
+        }
+    } else {
+        debug!("handle_capture: no WinRT frame for this monitor, using GDI fallback");
+        selection.pixels_rgb
+    };
+
+    info!(
+        "handle_capture: pixel source ready — {} bytes for {}x{}",
+        pixels_rgb.len(), region.w, region.h
+    );
+
+    // Step 4: Generate output path
     let filename = config::generate_filename(&cfg.capture.filename_pattern);
     let output_path = save_dir.join(format!("{}.jpg", filename));
 
@@ -191,10 +227,10 @@ fn handle_capture(cfg: &snip_types::Config, save_dir: &PathBuf) {
         output_path.display()
     );
 
-    // Step 3: Encode frozen overlay pixels as JPEG (no live WinRT capture)
+    // Step 5: Encode as JPEG
     if cfg.behavior.save_to_file {
         if pixels_rgb.is_empty() {
-            error!("handle_capture: no pixels extracted from overlay snapshot");
+            error!("handle_capture: no pixels from either HDR or GDI source");
             return;
         }
 
@@ -210,7 +246,7 @@ fn handle_capture(cfg: &snip_types::Config, save_dir: &PathBuf) {
         }
     }
 
-    // Step 4: Copy to clipboard
+    // Step 6: Copy to clipboard
     let clipboard_ok = if cfg.behavior.copy_to_clipboard {
         match clipboard::copy_to_clipboard(&output_path) {
             Ok(()) => true,
@@ -223,7 +259,7 @@ fn handle_capture(cfg: &snip_types::Config, save_dir: &PathBuf) {
         false
     };
 
-    // Step 5: Show capture preview popup (thumbnail + info text)
+    // Step 7: Show capture preview popup (thumbnail + info text)
     if let Err(e) = preview::show_preview(&output_path, clipboard_ok) {
         warn!("handle_capture: preview failed: {}", e);
         // Non-fatal — capture was still successful

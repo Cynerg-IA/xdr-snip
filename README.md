@@ -20,7 +20,8 @@ Lightweight screenshot tool for Windows 11. Select a region on a frozen screen, 
 ## Features
 
 - **Print Screen** → fullscreen frozen overlay → drag to select region
-- **Frozen capture** — screen freezes instantly via GDI BitBlt; pixels are extracted from the snapshot, not a live re-capture
+- **HDR + SDR support** — WinRT Graphics Capture with Extended Reinhard tone mapping; automatic fallback to GDI for compatibility
+- **Frozen capture** — screen freezes instantly; pixels are extracted from the snapshot, not a live re-capture
 - **JPEG output** — configurable quality (default 85%), typically 200-800KB for a full screen
 - **Clipboard + file** — copies to clipboard and saves to `~/Pictures/XDR-Snips/`
 - **System tray** — right-click for Take Screenshot, Open Folder, Settings, Quit
@@ -78,13 +79,14 @@ show_notification = true
 
 ## Architecture
 
-Single Rust binary using the `windows` crate for Win32/GDI APIs:
+Single Rust binary using the `windows` crate for Win32/GDI and WinRT APIs:
 
 | Module | Role |
 |--------|------|
-| `main.rs` | DPI setup, message loop, hotkey + tray event dispatch |
-| `overlay.rs` | Frozen-screen overlay (GDI BitBlt) with double-buffered region selection + pixel extraction |
-| `capture.rs` | JPEG encoder — encodes RGB pixels from overlay snapshot |
+| `main.rs` | DPI setup, message loop, hotkey + tray event dispatch, dual-capture orchestration |
+| `hdr_capture.rs` | WinRT Graphics Capture — per-monitor HDR frame acquisition (D3D11, R16G16B16A16Float) |
+| `overlay.rs` | Frozen-screen overlay (GDI BitBlt) with double-buffered region selection |
+| `capture.rs` | HDR tone mapping (Extended Reinhard) + JPEG encoder |
 | `clipboard.rs` | Decode JPEG → set clipboard image via `arboard` |
 | `preview.rs` | Capture preview popup — thumbnail + info text (click to open, auto-closes after 5s) |
 | `settings.rs` | GUI settings dialog — save path + quality slider with size estimates |
@@ -93,13 +95,24 @@ Single Rust binary using the `windows` crate for Win32/GDI APIs:
 
 ### Capture Pipeline
 
-1. User presses Print Screen → overlay captures entire virtual screen via `BitBlt` (GDI)
-2. Screen freezes: dimmed version shown as background, selected region at full brightness
-3. User releases mouse → overlay extracts selected region's pixels from frozen snapshot via `GetDIBits`
-4. BGRA→RGB conversion, JPEG encode via `image` crate
-5. File saved + clipboard set + preview popup shown
+1. User presses Print Screen
+2. **WinRT** captures each monitor as `R16G16B16A16Float` (preserves HDR data)
+3. **GDI** `BitBlt` captures the virtual screen for the frozen overlay display
+4. Screen freezes: dimmed version shown as background, selected region at full brightness
+5. User releases mouse → identifies target monitor
+6. If WinRT frame available: crop + Extended Reinhard tone map → RGB8. Otherwise: GDI fallback via `GetDIBits`
+7. JPEG encode via `image` crate → file saved + clipboard set + preview popup
 
 ## Release History
+
+### v0.3.0 — HDR capture re-integration (2026-02-27)
+
+- **HDR + SDR support** — WinRT Graphics Capture with `R16G16B16A16Float` pixel format, Extended Reinhard tone mapping
+- **Dual-capture architecture** — WinRT captures HDR frames per-monitor, GDI provides the frozen overlay display
+- **Automatic fallback** — if WinRT capture fails (permissions, driver), falls back to GDI-only (v0.2.0 behavior)
+- **SDR passthrough** — Reinhard curve is near-identity for [0,1] values; SDR content is unaffected
+- New module: `hdr_capture.rs` (D3D11 device, WinRT frame pool, IMemoryBufferByteAccess pixel reading)
+- Expanded `capture.rs` with tone mapping, HDR region extraction, pixel format conversion
 
 ### v0.2.0 — Frozen overlay capture (2026-02-27)
 

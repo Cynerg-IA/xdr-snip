@@ -44,7 +44,12 @@ pub struct Selection {
     pub region: Region,
     /// 0-based monitor index containing the selection.
     pub monitor: u32,
+    /// Raw `HMONITOR` value for HDR frame lookup.
+    pub hmonitor: isize,
+    /// Selected region in virtual-screen coordinates (before monitor translation).
+    pub vscreen_region: Region,
     /// RGB8 pixels of the selected area (row-major, 3 bytes/pixel).
+    /// Used as GDI fallback when WinRT HDR capture is unavailable.
     pub pixels_rgb: Vec<u8>,
 }
 
@@ -214,6 +219,8 @@ pub fn select_region() -> Result<Option<Selection>, SnipError> {
             Ok(Some(Selection {
                 region: monitor_region,
                 monitor: monitor_index,
+                hmonitor: hmonitor.0 as isize,
+                vscreen_region: region,
                 pixels_rgb: pixels_rgb.unwrap_or_default(),
             }))
         }

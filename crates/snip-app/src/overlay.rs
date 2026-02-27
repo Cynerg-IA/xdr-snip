@@ -16,9 +16,9 @@ use windows::Win32::Foundation::{
 use windows::Win32::Graphics::Gdi::{
     AlphaBlend, BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC,
     CreateSolidBrush, DeleteDC, DeleteObject, EndPaint, EnumDisplayMonitors, FrameRect, GetDC,
-    GetMonitorInfoW, InvalidateRect, MonitorFromPoint, ReleaseDC, SelectObject, AC_SRC_OVER,
-    BLENDFUNCTION, HDC, HMONITOR, MONITORINFO, MONITOR_DEFAULTTONEAREST, PAINTSTRUCT,
-    SRCCOPY,
+    GetDIBits, GetMonitorInfoW, InvalidateRect, MonitorFromPoint, ReleaseDC, SelectObject,
+    AC_SRC_OVER, BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION, DIB_RGB_COLORS, HDC, HMONITOR,
+    MONITORINFO, MONITOR_DEFAULTTONEAREST, PAINTSTRUCT, SRCCOPY,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Input::KeyboardAndMouse::{SetCapture, VK_ESCAPE};
@@ -31,6 +31,22 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_PAINT, WM_RBUTTONDOWN, WM_SETCURSOR,
     WNDCLASSW, WS_EX_TOPMOST, WS_POPUP,
 };
+
+// ======================== PUBLIC TYPES ========================
+
+/// Result of a successful region selection.
+///
+/// Contains the selected region, monitor index, and the actual RGB pixels
+/// extracted from the frozen overlay snapshot — guarantees the output matches
+/// what the user saw while selecting.
+pub struct Selection {
+    /// Selected region in monitor-relative coordinates.
+    pub region: Region,
+    /// 0-based monitor index containing the selection.
+    pub monitor: u32,
+    /// RGB8 pixels of the selected area (row-major, 3 bytes/pixel).
+    pub pixels_rgb: Vec<u8>,
+}
 
 // ======================== THREAD-LOCAL STATE ========================
 
@@ -83,7 +99,7 @@ const DIM_ALPHA: u8 = 128;
 ///
 /// Returns `Ok(Some((region, monitor_index)))` when a region is selected,
 /// `Ok(None)` when the user cancels, or `Err` on Win32 failure.
-pub fn select_region() -> Result<Option<(Region, u32)>, SnipError> {
+pub fn select_region() -> Result<Option<Selection>, SnipError> {
     info!("select_region: starting overlay");
 
     // Reset state
@@ -142,13 +158,11 @@ pub fn select_region() -> Result<Option<(Region, u32)>, SnipError> {
     // Run the message loop until the overlay is closed
     run_message_loop();
 
-    // Clean up the captured screen bitmaps
-    cleanup_screen_snapshot();
-
-    // Read result
+    // Read result — don't clean up yet, we need SCREEN_DC for pixel extraction
     let (result, cancelled) = unsafe { (OVERLAY_RESULT, OVERLAY_CANCELLED) };
 
     if cancelled {
+        cleanup_screen_snapshot();
         info!("select_region: user cancelled selection");
         return Ok(None);
     }
@@ -156,6 +170,14 @@ pub fn select_region() -> Result<Option<(Region, u32)>, SnipError> {
     match result {
         Some(region) => {
             debug!("select_region: raw virtual-screen region = {}", region);
+
+            // Extract pixels from the frozen snapshot BEFORE cleanup
+            let pixels_rgb = extract_selection_rgb(
+                region.x, region.y, region.w, region.h,
+            );
+
+            // Now safe to clean up the screen bitmaps
+            cleanup_screen_snapshot();
 
             let center = POINT {
                 x: region.x + (region.w as i32 / 2),
@@ -185,13 +207,18 @@ pub fn select_region() -> Result<Option<(Region, u32)>, SnipError> {
             let monitor_index = hmonitor_to_index(hmonitor);
 
             info!(
-                "select_region: selected region={}, monitor_index={}",
-                monitor_region, monitor_index
+                "select_region: selected region={}, monitor_index={}, pixels={}bytes",
+                monitor_region, monitor_index, pixels_rgb.as_ref().map(|v| v.len()).unwrap_or(0)
             );
 
-            Ok(Some((monitor_region, monitor_index)))
+            Ok(Some(Selection {
+                region: monitor_region,
+                monitor: monitor_index,
+                pixels_rgb: pixels_rgb.unwrap_or_default(),
+            }))
         }
         None => {
+            cleanup_screen_snapshot();
             info!("select_region: no region captured");
             Ok(None)
         }
@@ -290,6 +317,112 @@ fn capture_screen_snapshot(
 
     debug!("capture_screen_snapshot: screen captured and dimmed version created");
     Ok(())
+}
+
+/// Extracts RGB pixels from the frozen screen snapshot for the selected region.
+///
+/// Coordinates are in virtual-screen space. Reads BGRA from SCREEN_DC via
+/// GetDIBits and converts to RGB8 for JPEG encoding.
+///
+/// Returns `None` if SCREEN_DC is invalid (already cleaned up or never captured).
+fn extract_selection_rgb(vx: i32, vy: i32, w: u32, h: u32) -> Option<Vec<u8>> {
+    unsafe {
+        let screen_dc = std::ptr::addr_of!(SCREEN_DC).read();
+        if screen_dc.is_invalid() {
+            warn!("extract_selection_rgb: SCREEN_DC is invalid");
+            return None;
+        }
+
+        // Convert virtual-screen coords to bitmap coords
+        let bx = vx - VSCREEN_X;
+        let by = vy - VSCREEN_Y;
+        let iw = w as i32;
+        let ih = h as i32;
+
+        debug!(
+            "extract_selection_rgb: bitmap coords ({},{}) {}x{}",
+            bx, by, iw, ih
+        );
+
+        // Need a screen-compatible DC for CreateCompatibleBitmap
+        let hdc_screen = GetDC(None);
+
+        // Create a temporary DC + bitmap for the cropped region
+        let temp_dc = CreateCompatibleDC(Some(hdc_screen));
+        let temp_bmp = CreateCompatibleBitmap(hdc_screen, iw, ih);
+
+        ReleaseDC(None, hdc_screen);
+
+        if temp_dc.is_invalid() || temp_bmp.is_invalid() {
+            warn!("extract_selection_rgb: failed to create temp DC/bitmap");
+            if !temp_dc.is_invalid() {
+                let _ = DeleteDC(temp_dc);
+            }
+            if !temp_bmp.is_invalid() {
+                let _ = DeleteObject(temp_bmp.into());
+            }
+            return None;
+        }
+
+        // Select bitmap, BitBlt the region from the frozen snapshot
+        let old_bmp = SelectObject(temp_dc, temp_bmp.into());
+        let _ = BitBlt(temp_dc, 0, 0, iw, ih, Some(screen_dc), bx, by, SRCCOPY);
+
+        // Deselect bitmap before GetDIBits (required by the API)
+        SelectObject(temp_dc, old_bmp);
+
+        // Read BGRA pixels via GetDIBits
+        let mut bmi = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: iw,
+                biHeight: -ih, // negative = top-down scanline order
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: 0, // BI_RGB
+                ..mem::zeroed()
+            },
+            ..mem::zeroed()
+        };
+
+        let mut bgra = vec![0u8; (w * h * 4) as usize];
+
+        let lines = GetDIBits(
+            temp_dc,
+            temp_bmp,
+            0,
+            ih as u32,
+            Some(bgra.as_mut_ptr() as *mut _),
+            &mut bmi,
+            DIB_RGB_COLORS,
+        );
+
+        // Clean up temp resources
+        let _ = DeleteObject(temp_bmp.into());
+        let _ = DeleteDC(temp_dc);
+
+        if lines == 0 {
+            warn!("extract_selection_rgb: GetDIBits returned 0 lines");
+            return None;
+        }
+
+        // Convert BGRA → RGB for JPEG encoding
+        let pixel_count = (w * h) as usize;
+        let mut rgb = Vec::with_capacity(pixel_count * 3);
+        for i in 0..pixel_count {
+            let offset = i * 4;
+            rgb.push(bgra[offset + 2]); // R
+            rgb.push(bgra[offset + 1]); // G
+            rgb.push(bgra[offset]);     // B
+        }
+
+        debug!(
+            "extract_selection_rgb: extracted {} RGB bytes for {}x{} region",
+            rgb.len(), w, h
+        );
+
+        Some(rgb)
+    }
 }
 
 /// Cleans up the memory DCs and bitmaps from the screen capture.

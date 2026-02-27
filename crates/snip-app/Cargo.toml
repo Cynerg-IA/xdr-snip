@@ -19,12 +19,6 @@ arboard = "3"
 # Image encoding/decoding (JPEG encode for capture, decode for clipboard)
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
 
-# Half-float (f16) conversion for HDR pixel data
-half = "2"
-
-# Parallel scanline processing for tone mapping
-rayon = "1"
-
 # TOML config parsing
 toml = "0.8"
 
@@ -41,32 +35,20 @@ dirs = "6"
 # Timestamp generation for filenames
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
-# Windows APIs (Win32 overlay, tray balloon, DPI, shell, capture, D3D11)
+# Windows APIs (Win32 overlay, GDI, shell, DPI, tray)
 [dependencies.windows]
 version = "0.59"
 features = [
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_Graphics_Gdi",
-    "Win32_Graphics_Direct3D11",
-    "Win32_Graphics_Direct3D",
-    "Win32_Graphics_Dxgi",
     "Win32_System_LibraryLoader",
     "Win32_Foundation",
     "Win32_System_DataExchange",
     "Win32_System_Memory",
-    "Win32_System_WinRT",
-    "Win32_System_WinRT_Direct3D11",
-    "Win32_System_WinRT_Graphics_Capture",
     "Win32_UI_Shell",
     "Win32_UI_Shell_Common",
     "Win32_UI_Controls",
     "Win32_UI_HiDpi",
     "Win32_System_Com",
-    "Graphics_Capture",
-    "Graphics_DirectX",
-    "Graphics_DirectX_Direct3D11",
-    "Graphics_Imaging",
-    "Foundation",
-    "Storage_Streams",
 ]

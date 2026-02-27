@@ -175,10 +175,11 @@ fn handle_capture(cfg: &snip_types::Config, save_dir: &PathBuf) {
         }
     };
 
-    let (region, monitor) = selection;
+    let region = selection.region;
+    let pixels_rgb = selection.pixels_rgb;
     info!(
-        "handle_capture: region={}, monitor={}",
-        region, monitor
+        "handle_capture: region={}, monitor={}, pixels={}bytes",
+        region, selection.monitor, pixels_rgb.len()
     );
 
     // Step 2: Generate output path
@@ -190,12 +191,21 @@ fn handle_capture(cfg: &snip_types::Config, save_dir: &PathBuf) {
         output_path.display()
     );
 
-    // Step 3: Capture via Windows.Graphics.Capture (in-process)
+    // Step 3: Encode frozen overlay pixels as JPEG (no live WinRT capture)
     if cfg.behavior.save_to_file {
-        if let Err(e) =
-            capture::capture_region(&region, monitor, cfg.capture.quality, &output_path)
-        {
-            error!("handle_capture: capture failed: {}", e);
+        if pixels_rgb.is_empty() {
+            error!("handle_capture: no pixels extracted from overlay snapshot");
+            return;
+        }
+
+        if let Err(e) = capture::encode_jpeg(
+            &pixels_rgb,
+            region.w,
+            region.h,
+            cfg.capture.quality,
+            &output_path,
+        ) {
+            error!("handle_capture: JPEG encode failed: {}", e);
             return;
         }
     }

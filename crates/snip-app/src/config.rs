@@ -1,6 +1,6 @@
 //! Configuration loading and path utilities.
 //!
-//! Reads `config.toml` from `%APPDATA%/hdr-snip/`, creating it with defaults
+//! Reads `config.toml` from `%APPDATA%/xdr-snip/`, creating it with defaults
 //! if the file or directory does not yet exist.
 
 use std::fs;
@@ -11,12 +11,12 @@ use snip_types::{Config, SnipError};
 use tracing::{debug, info, warn};
 
 /// Name of the config directory under `%APPDATA%`.
-const APP_DIR_NAME: &str = "hdr-snip";
+const APP_DIR_NAME: &str = "xdr-snip";
 
 /// Config file name inside the app directory.
 const CONFIG_FILE_NAME: &str = "config.toml";
 
-/// Loads the application configuration from `%APPDATA%/hdr-snip/config.toml`.
+/// Loads the application configuration from `%APPDATA%/xdr-snip/config.toml`.
 ///
 /// If the file does not exist, a default config is written to disk and returned.
 /// Returns [`SnipError::Config`] if the file exists but cannot be parsed.
@@ -59,10 +59,10 @@ pub fn load_config() -> Result<Config, SnipError> {
         ))
     })?;
 
-    // Validate quality range
-    if config.capture.quality == 0 || config.capture.quality > 100 {
+    // Validate quality range (50-100; below 50 = visible artifacts)
+    if config.capture.quality < 50 || config.capture.quality > 100 {
         warn!(
-            "load_config: quality {} out of 1-100 range, clamping",
+            "load_config: quality {} out of 50-100 range, clamping",
             config.capture.quality
         );
     }
@@ -114,9 +114,28 @@ pub fn generate_filename(pattern: &str) -> String {
     result
 }
 
+/// Returns the path to the config file (`%APPDATA%/xdr-snip/config.toml`).
+///
+/// Used by the tray "Settings" menu item to open the file in the default editor.
+pub fn config_file_path() -> Result<PathBuf, SnipError> {
+    let dir = resolve_config_dir()?;
+    Ok(dir.join(CONFIG_FILE_NAME))
+}
+
+/// Saves the given configuration to `%APPDATA%/xdr-snip/config.toml`.
+///
+/// Overwrites the existing file. Used by the settings dialog to persist changes.
+pub fn save_config(config: &Config) -> Result<(), SnipError> {
+    let path = config_file_path()?;
+    debug!("save_config: writing to {}", path.display());
+    write_default_config(&path, config)?;
+    info!("save_config: config saved successfully");
+    Ok(())
+}
+
 // ======================== INTERNAL HELPERS ========================
 
-/// Resolves the config directory (`%APPDATA%/hdr-snip`), creating it if needed.
+/// Resolves the config directory (`%APPDATA%/xdr-snip`), creating it if needed.
 fn resolve_config_dir() -> Result<PathBuf, SnipError> {
     let base = dirs::config_dir().ok_or_else(|| {
         SnipError::Config("cannot determine %APPDATA% directory".to_string())

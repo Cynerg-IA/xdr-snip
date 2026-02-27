@@ -1,6 +1,6 @@
 //! # snip-types
 //!
-//! Shared type definitions, configuration structs, and error types for HDR Snip.
+//! Shared type definitions, configuration structs, and error types for XDR Snip.
 //! This crate is dependency-free from platform APIs so it can be used in tests
 //! and tooling without pulling in the Windows crate.
 
@@ -38,7 +38,7 @@ impl Default for Config {
 /// Capture-related settings: JPEG quality, output directory, filename template.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CaptureConfig {
-    /// JPEG quality level (1-100). Higher values produce larger, sharper files.
+    /// JPEG quality level (50-100). Higher values produce larger, sharper files.
     #[serde(default = "default_quality")]
     pub quality: u32,
 
@@ -118,7 +118,7 @@ fn default_quality() -> u32 {
 /// Default save directory — `~/Pictures/HDR-Snips` for clean separation from
 /// other screenshot tools.
 fn default_save_dir() -> String {
-    "~/Pictures/HDR-Snips".to_string()
+    "~/Pictures/XDR-Snips".to_string()
 }
 
 /// Default filename pattern with timestamp placeholder.

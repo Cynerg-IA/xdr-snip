@@ -1,6 +1,6 @@
 [capture]
 quality = 85
-save_dir = "~/Pictures/HDR-Snips"
+save_dir = "~/Pictures/XDR-Snips"
 filename_pattern = "screenshot_{timestamp}"
 
 [hotkey]

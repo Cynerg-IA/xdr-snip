@@ -12,15 +12,32 @@ use tracing::{debug, info};
 /// Width and height of the tray icon in pixels.
 const ICON_SIZE: u32 = 32;
 
+/// IDs for each tray menu item, returned by [`create_tray`].
+pub struct TrayMenuIds {
+    pub screenshot: String,
+    pub open_folder: String,
+    pub settings: String,
+    pub quit: String,
+}
+
 /// Creates the system tray icon and its context menu.
 ///
-/// Returns a tuple of:
-/// - [`TrayIcon`] — must be kept alive for the icon to remain visible.
-/// - Three `String` values (menu item IDs) for: Take Screenshot, Open Folder, Quit.
+/// Menu layout:
+/// ```text
+///   Take Screenshot
+///   ─────────────
+///   Open Folder
+///   Settings
+///   Open Log
+///   ─────────────
+///   Quit
+/// ```
+///
+/// Returns the [`TrayIcon`] (must be kept alive) and the [`TrayMenuIds`].
 ///
 /// # Errors
 /// Returns [`SnipError::Overlay`] if icon or menu creation fails.
-pub fn create_tray() -> Result<(TrayIcon, String, String, String), SnipError> {
+pub fn create_tray() -> Result<(TrayIcon, TrayMenuIds), SnipError> {
     info!("create_tray: building tray icon and menu");
 
     // Build the context menu
@@ -28,40 +45,41 @@ pub fn create_tray() -> Result<(TrayIcon, String, String, String), SnipError> {
 
     let item_screenshot = MenuItem::new("Take Screenshot", true, None);
     let item_open_folder = MenuItem::new("Open Folder", true, None);
+    let item_settings = MenuItem::new("Settings", true, None);
     let item_quit = MenuItem::new("Quit", true, None);
 
     // Capture IDs before appending — the ID is a simple value type
-    let id_screenshot = item_screenshot.id().0.clone();
-    let id_open_folder = item_open_folder.id().0.clone();
-    let id_quit = item_quit.id().0.clone();
+    let ids = TrayMenuIds {
+        screenshot: item_screenshot.id().0.clone(),
+        open_folder: item_open_folder.id().0.clone(),
+        settings: item_settings.id().0.clone(),
+        quit: item_quit.id().0.clone(),
+    };
 
     debug!(
-        "create_tray: menu item IDs — screenshot={}, open_folder={}, quit={}",
-        id_screenshot, id_open_folder, id_quit
+        "create_tray: menu IDs — screenshot={}, open_folder={}, settings={}, quit={}",
+        ids.screenshot, ids.open_folder, ids.settings, ids.quit
     );
 
-    menu.append(&item_screenshot).map_err(|e| {
-        SnipError::Overlay(format!("failed to append Screenshot menu item: {}", e))
-    })?;
-    menu.append(&PredefinedMenuItem::separator()).map_err(|e| {
-        SnipError::Overlay(format!("failed to append separator: {}", e))
-    })?;
-    menu.append(&item_open_folder).map_err(|e| {
-        SnipError::Overlay(format!("failed to append Open Folder menu item: {}", e))
-    })?;
-    menu.append(&PredefinedMenuItem::separator()).map_err(|e| {
-        SnipError::Overlay(format!("failed to append separator: {}", e))
-    })?;
-    menu.append(&item_quit).map_err(|e| {
-        SnipError::Overlay(format!("failed to append Quit menu item: {}", e))
-    })?;
+    let append = |item: &dyn tray_icon::menu::IsMenuItem, label: &str| -> Result<(), SnipError> {
+        menu.append(item).map_err(|e| {
+            SnipError::Overlay(format!("failed to append {} menu item: {}", label, e))
+        })
+    };
+
+    append(&item_screenshot, "Screenshot")?;
+    append(&PredefinedMenuItem::separator(), "separator")?;
+    append(&item_open_folder, "Open Folder")?;
+    append(&item_settings, "Settings")?;
+    append(&PredefinedMenuItem::separator(), "separator")?;
+    append(&item_quit, "Quit")?;
 
     // Generate the snip icon — four crop-mark corner brackets
     let icon = create_snip_icon()?;
 
     let tray = TrayIconBuilder::new()
         .with_menu(Box::new(menu))
-        .with_tooltip("HDR Snip — Press PrintScreen to capture")
+        .with_tooltip("XDR Snip — Press PrintScreen to capture")
         .with_icon(icon)
         .build()
         .map_err(|e| {
@@ -70,7 +88,7 @@ pub fn create_tray() -> Result<(TrayIcon, String, String, String), SnipError> {
 
     info!("create_tray: tray icon created successfully");
 
-    Ok((tray, id_screenshot, id_open_folder, id_quit))
+    Ok((tray, ids))
 }
 
 // ======================== ICON GENERATION ========================

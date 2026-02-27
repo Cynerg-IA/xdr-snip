@@ -1,4 +1,4 @@
-//! # HDR Snip — main entry point
+//! # XDR Snip — main entry point
 //!
 //! Sets DPI awareness, initializes logging, loads config, creates the system
 //! tray, registers the global hotkey, and runs a Win32 message loop that
@@ -11,8 +11,9 @@ mod capture;
 mod clipboard;
 mod config;
 mod hotkey;
-mod notification;
 mod overlay;
+mod preview;
+mod settings;
 mod tray;
 
 use std::fs;
@@ -58,7 +59,7 @@ fn main() {
     // 2. Logging
     init_tracing();
 
-    info!("hdr-snip starting");
+    info!("xdr-snip starting");
 
     // 3. Run the application; report top-level errors
     if let Err(e) = run() {
@@ -66,17 +67,17 @@ fn main() {
         std::process::exit(1);
     }
 
-    info!("hdr-snip exiting cleanly");
+    info!("xdr-snip exiting cleanly");
 }
 
 /// Core application logic, separated from `main` for clean error propagation.
 fn run() -> Result<(), SnipError> {
-    // Load configuration
-    let cfg = config::load_config()?;
+    // Load configuration (mutable — settings dialog can hot-reload)
+    let mut cfg = config::load_config()?;
     info!("config loaded: {:?}", cfg);
 
     // Resolve the save directory early so we fail fast on bad paths
-    let save_dir = config::expand_tilde(&cfg.capture.save_dir);
+    let mut save_dir = config::expand_tilde(&cfg.capture.save_dir);
     if !save_dir.exists() {
         info!(
             "save directory does not exist, creating: {}",
@@ -86,7 +87,7 @@ fn run() -> Result<(), SnipError> {
     }
 
     // Create the system tray icon + menu
-    let (_tray, id_screenshot, id_open_folder, id_quit) = tray::create_tray()?;
+    let (_tray, tray_ids) = tray::create_tray()?;
 
     // Register the global hotkey
     let (_hk_manager, hotkey_handle) = hotkey::register_hotkey(&cfg.hotkey)?;
@@ -125,15 +126,18 @@ fn run() -> Result<(), SnipError> {
             let clicked_id: String = event.id().0.clone();
             debug!("main: menu event id={}", clicked_id);
 
-            if clicked_id == id_screenshot {
+            if clicked_id == tray_ids.screenshot {
                 debug!("main: menu -> Take Screenshot");
                 handle_capture(&cfg, &save_dir);
                 // Drain stale hotkey events here too
                 while hotkey_rx.try_recv().is_ok() {}
-            } else if clicked_id == id_open_folder {
+            } else if clicked_id == tray_ids.open_folder {
                 debug!("main: menu -> Open Folder");
                 open_folder(&save_dir);
-            } else if clicked_id == id_quit {
+            } else if clicked_id == tray_ids.settings {
+                debug!("main: menu -> Settings");
+                handle_settings(&mut cfg, &mut save_dir);
+            } else if clicked_id == tray_ids.quit {
                 info!("main: menu -> Quit");
                 break;
             }
@@ -144,7 +148,7 @@ fn run() -> Result<(), SnipError> {
     }
 
     // Cleanup
-    notification::remove_notification_icon();
+    preview::close_preview();
     info!("main: cleanup complete");
 
     Ok(())
@@ -152,9 +156,9 @@ fn run() -> Result<(), SnipError> {
 
 // ======================== CAPTURE WORKFLOW ========================
 
-/// Runs the full capture pipeline: overlay -> capture -> clipboard -> notification.
+/// Runs the full capture pipeline: overlay -> capture -> clipboard -> preview.
 ///
-/// Errors are logged and displayed via notification — they do not crash the app.
+/// Errors are logged and displayed via preview popup — they do not crash the app.
 fn handle_capture(cfg: &snip_types::Config, save_dir: &PathBuf) {
     info!("handle_capture: starting capture workflow");
 
@@ -186,7 +190,7 @@ fn handle_capture(cfg: &snip_types::Config, save_dir: &PathBuf) {
         output_path.display()
     );
 
-    // Step 3: Capture via external helper
+    // Step 3: Capture via Windows.Graphics.Capture (in-process)
     if cfg.behavior.save_to_file {
         if let Err(e) =
             capture::capture_region(&region, monitor, cfg.capture.quality, &output_path)
@@ -209,12 +213,10 @@ fn handle_capture(cfg: &snip_types::Config, save_dir: &PathBuf) {
         false
     };
 
-    // Step 5: Show notification with capture details
-    if cfg.behavior.show_notification {
-        if let Err(e) = notification::show_capture_notification(&output_path, clipboard_ok) {
-            warn!("handle_capture: notification failed: {}", e);
-            // Non-fatal
-        }
+    // Step 5: Show capture preview popup (thumbnail + info text)
+    if let Err(e) = preview::show_preview(&output_path, clipboard_ok) {
+        warn!("handle_capture: preview failed: {}", e);
+        // Non-fatal — capture was still successful
     }
 
     info!("handle_capture: capture workflow complete");
@@ -224,7 +226,7 @@ fn handle_capture(cfg: &snip_types::Config, save_dir: &PathBuf) {
 
 /// Initializes the `tracing` subscriber with file output.
 ///
-/// Logs to `%APPDATA%/hdr-snip/hdr-snip.log` since this is a GUI app with no
+/// Logs to `%APPDATA%/xdr-snip/xdr-snip.log` since this is a GUI app with no
 /// console. The log file is truncated on each launch.
 /// Override level with `RUST_LOG=debug` or `RUST_LOG=hdr_snip=trace`.
 fn init_tracing() {
@@ -237,11 +239,11 @@ fn init_tracing() {
 
     // Write logs to file — GUI app has no console
     let log_dir = dirs::config_dir()
-        .map(|d| d.join("hdr-snip"))
+        .map(|d| d.join("xdr-snip"))
         .unwrap_or_else(|| std::path::PathBuf::from("."));
     let _ = std::fs::create_dir_all(&log_dir);
 
-    let log_path = log_dir.join("hdr-snip.log");
+    let log_path = log_dir.join("xdr-snip.log");
     match OpenOptions::new()
         .create(true)
         .write(true)
@@ -282,14 +284,46 @@ fn drain_win32_messages() {
 /// Opens a folder in Windows Explorer via ShellExecuteW.
 fn open_folder(path: &PathBuf) {
     debug!("open_folder: opening {}", path.display());
+    shell_open(&path.to_string_lossy());
+    info!("open_folder: dispatched for {}", path.display());
+}
 
+/// Opens the settings dialog and hot-reloads config if the user saves.
+fn handle_settings(cfg: &mut snip_types::Config, save_dir: &mut PathBuf) {
+    match settings::open_settings(cfg) {
+        Ok(Some(new_cfg)) => {
+            info!("handle_settings: config updated, hot-reloading");
+            // Update the save directory if it changed
+            let new_dir = config::expand_tilde(&new_cfg.capture.save_dir);
+            if !new_dir.exists() {
+                info!(
+                    "handle_settings: creating new save directory: {}",
+                    new_dir.display()
+                );
+                let _ = fs::create_dir_all(&new_dir);
+            }
+            *save_dir = new_dir;
+            *cfg = new_cfg;
+        }
+        Ok(None) => {
+            debug!("handle_settings: user cancelled");
+        }
+        Err(e) => {
+            warn!("handle_settings: settings dialog failed: {}", e);
+        }
+    }
+}
+
+/// Opens a path via `ShellExecuteW` with the "open" verb.
+///
+/// Works for files (opens in default app) and directories (opens in Explorer).
+fn shell_open(path: &str) {
     let path_wide: Vec<u16> = path
-        .to_string_lossy()
         .encode_utf16()
         .chain(std::iter::once(0))
         .collect();
 
-    // SAFETY: ShellExecuteW with "open" verb and a directory path is safe.
+    // SAFETY: ShellExecuteW with "open" verb is safe.
     // The path_wide Vec lives until after the call returns.
     unsafe {
         ShellExecuteW(
@@ -301,9 +335,4 @@ fn open_folder(path: &PathBuf) {
             SW_SHOWNORMAL,
         );
     }
-
-    info!(
-        "open_folder: ShellExecuteW dispatched for {}",
-        path.display()
-    );
 }

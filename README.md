@@ -124,6 +124,12 @@ Single Rust binary using the `windows` crate for Win32/GDI and WinRT APIs:
 
 ## Release History
 
+### v0.4.5 — Universal preview + format-agnostic thumbnails (2026-02-27)
+
+- **Preview works for ALL formats** — thumbnail generated from raw capture pixels instead of re-decoding the output file. Fixes WebP and AVIF preview failures (`image::open: format not supported`)
+- **WebP decode support** — added `webp` feature to image crate for future use
+- **Faster preview** — no file I/O for thumbnail generation; nearest-neighbor downsample from raw RGB pixels already in memory
+
 ### v0.4.4 — Fix AVIF encoding hang + quality guardrails (2026-02-27)
 
 - **Threaded encoding** — image encoding runs on a background thread; UI stays responsive during slow AVIF/high-quality encodes (previously froze for 100+ seconds on 5K images)

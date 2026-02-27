@@ -866,6 +866,7 @@ dependencies = [
  "bytemuck",
  "byteorder-lite",
  "exr",
+ "image-webp",
  "moxcms",
  "num-traits",
  "png 0.18.1",
@@ -873,6 +874,16 @@ dependencies = [
  "tiff",
  "zune-core 0.5.1",
  "zune-jpeg 0.5.12",
+]
+
+[[package]]
+name = "image-webp"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "525e9ff3e1a4be2fbea1fdf0e98686a6d98b4d8f937e1bf7402245af1909e8c3"
+dependencies = [
+ "byteorder-lite",
+ "quick-error",
 ]
 
 [[package]]
@@ -2615,7 +2626,7 @@ checksum = "ea6fc2961e4ef194dcbfe56bb845534d0dc8098940c7e5c012a258bfec6701bd"
 
 [[package]]
 name = "xdr-snip"
-version = "0.4.4"
+version = "0.4.5"
 dependencies = [
  "arboard",
  "chrono",

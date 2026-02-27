@@ -32,12 +32,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WS_POPUP,
 };
 
-/// Maximum thumbnail width in pixels.
-const PREVIEW_MAX_W: u32 = 300;
-
-/// Maximum thumbnail height in pixels.
-const PREVIEW_MAX_H: u32 = 300;
-
 /// Minimum popup width — ensures text is readable.
 const PREVIEW_MIN_W: i32 = 280;
 
@@ -109,24 +103,28 @@ static mut FILE_PATH: [u16; 512] = [0u16; 512];
 ///
 /// Only one popup is shown at a time — calling this while one is visible
 /// replaces the old one.
-pub fn show_preview(jpeg_path: &Path, copied_to_clipboard: bool) -> Result<(), SnipError> {
+///
+/// `thumb_rgb` is a pre-generated thumbnail in RGB8 format (3 bytes/pixel).
+/// The thumbnail is generated from raw capture pixels in `handle_capture`,
+/// so preview works for ALL output formats without format-specific decoders.
+pub fn show_preview(
+    file_path: &Path,
+    thumb_rgb: &[u8],
+    thumb_w: u32,
+    thumb_h: u32,
+    orig_w: u32,
+    orig_h: u32,
+    copied_to_clipboard: bool,
+) -> Result<(), SnipError> {
     info!(
-        "show_preview: path={}, clipboard={}",
-        jpeg_path.display(),
-        copied_to_clipboard
+        "show_preview: path={}, thumb={}x{}, orig={}x{}, clipboard={}",
+        file_path.display(), thumb_w, thumb_h, orig_w, orig_h, copied_to_clipboard
     );
 
     // Close any existing preview first
     close_preview();
 
-    // Load the JPEG and create a thumbnail (preserving aspect ratio)
-    let img = image::open(jpeg_path)
-        .map_err(|e| SnipError::Notification(format!("image::open: {}", e)))?;
-
-    let (orig_w, orig_h) = (img.width(), img.height());
-    let thumb = img.thumbnail(PREVIEW_MAX_W, PREVIEW_MAX_H);
-    let rgb = thumb.to_rgb8();
-    let (tw, th) = (rgb.width(), rgb.height());
+    let (tw, th) = (thumb_w, thumb_h);
 
     info!(
         "show_preview: thumbnail {}x{} from {}x{}",
@@ -134,18 +132,18 @@ pub fn show_preview(jpeg_path: &Path, copied_to_clipboard: bool) -> Result<(), S
     );
 
     // Convert RGB → BGRA and store in static buffer
-    prepare_thumb_pixels(&rgb, tw, th);
+    prepare_thumb_pixels_raw(thumb_rgb, tw, th);
 
     // Build info text: dimensions | size | clipboard status \n filename
-    let file_size = jpeg_path.metadata().map(|m| m.len()).unwrap_or(0);
+    let file_size = file_path.metadata().map(|m| m.len()).unwrap_or(0);
     let size_str = format_file_size(file_size);
     let mut text = format!("{} x {} | {}", orig_w, orig_h, size_str);
     if copied_to_clipboard {
         text.push_str(" | Copied");
     }
-    text.push_str(&format!("\n{}", jpeg_path.display()));
+    text.push_str(&format!("\n{}", file_path.display()));
     store_info_text(&text);
-    store_file_path(&jpeg_path.to_string_lossy());
+    store_file_path(&file_path.to_string_lossy());
 
     // Window dimensions: thumbnail + text area + borders
     let win_w = (tw as i32 + BORDER_PX * 2).max(PREVIEW_MIN_W);
@@ -234,19 +232,23 @@ pub fn close_preview() {
 
 // ======================== PIXEL BUFFER ========================
 
-/// Converts RGB pixels to BGRA and stores them in the static buffer.
-fn prepare_thumb_pixels(rgb: &image::RgbImage, tw: u32, th: u32) {
+/// Converts raw RGB8 pixels to BGRA and stores them in the static buffer.
+///
+/// Accepts a raw byte slice (3 bytes/pixel RGB) instead of an `image::RgbImage`,
+/// so preview works without format-specific image decoders.
+fn prepare_thumb_pixels_raw(rgb: &[u8], tw: u32, th: u32) {
     let pixel_count = (tw * th) as usize;
     let mut bgra = vec![0u8; pixel_count * 4];
-    let src = rgb.as_raw();
 
     for i in 0..pixel_count {
         let si = i * 3;
         let di = i * 4;
-        bgra[di] = src[si + 2];     // B
-        bgra[di + 1] = src[si + 1]; // G
-        bgra[di + 2] = src[si];     // R
-        bgra[di + 3] = 255;         // A (opaque)
+        if si + 2 < rgb.len() {
+            bgra[di] = rgb[si + 2];     // B
+            bgra[di + 1] = rgb[si + 1]; // G
+            bgra[di + 2] = rgb[si];     // R
+            bgra[di + 3] = 255;         // A (opaque)
+        }
     }
 
     unsafe {
@@ -258,7 +260,51 @@ fn prepare_thumb_pixels(rgb: &image::RgbImage, tw: u32, th: u32) {
         THUMB_H = th as i32;
     }
 
-    debug!("prepare_thumb_pixels: {}x{} → {} bytes BGRA", tw, th, pixel_count * 4);
+    debug!("prepare_thumb_pixels_raw: {}x{} → {} bytes BGRA", tw, th, pixel_count * 4);
+}
+
+/// Generates a thumbnail from raw RGB8 pixels using nearest-neighbor downsampling.
+///
+/// Returns `(rgb_bytes, thumb_w, thumb_h)`. The thumbnail preserves aspect ratio
+/// and fits within `max_w × max_h`. Works with any capture format since it
+/// operates on raw pixels, not decoded files.
+pub fn generate_thumbnail(
+    rgb: &[u8],
+    w: u32,
+    h: u32,
+    max_w: u32,
+    max_h: u32,
+) -> (Vec<u8>, u32, u32) {
+    // Scale factor to fit within max dimensions while preserving aspect ratio
+    let scale_w = max_w as f64 / w as f64;
+    let scale_h = max_h as f64 / h as f64;
+    let scale = scale_w.min(scale_h).min(1.0); // Never upscale
+
+    let tw = ((w as f64 * scale) as u32).max(1);
+    let th = ((h as f64 * scale) as u32).max(1);
+
+    let mut out = vec![0u8; (tw * th * 3) as usize];
+    let src_stride = w as usize * 3;
+
+    for ty in 0..th {
+        for tx in 0..tw {
+            // Map thumbnail pixel back to source pixel (nearest-neighbor)
+            let sx = ((tx as f64 / scale) as u32).min(w - 1);
+            let sy = ((ty as f64 / scale) as u32).min(h - 1);
+
+            let si = sy as usize * src_stride + sx as usize * 3;
+            let di = (ty * tw + tx) as usize * 3;
+
+            if si + 2 < rgb.len() && di + 2 < out.len() {
+                out[di] = rgb[si];
+                out[di + 1] = rgb[si + 1];
+                out[di + 2] = rgb[si + 2];
+            }
+        }
+    }
+
+    debug!("generate_thumbnail: {}x{} → {}x{} (scale={:.3})", w, h, tw, th, scale);
+    (out, tw, th)
 }
 
 /// Stores a UTF-8 string as a wide string in the static INFO_TEXT buffer.

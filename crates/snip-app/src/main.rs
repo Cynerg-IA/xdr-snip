@@ -274,6 +274,13 @@ fn handle_capture(cfg: &snip_types::Config, save_dir: &PathBuf) {
         false
     };
 
+    // Step 5b: Generate preview thumbnail from raw pixels BEFORE encoding moves them.
+    // This works for ALL output formats — no format-specific decoders needed.
+    let (thumb_rgb, thumb_w, thumb_h) =
+        preview::generate_thumbnail(&pixels_rgb, region.w, region.h, 300, 300);
+    let orig_w = region.w;
+    let orig_h = region.h;
+
     // Step 6: Encode in configured format (on background thread for UI responsiveness)
     if cfg.behavior.save_to_file {
         if pixels_rgb.is_empty() {
@@ -313,7 +320,15 @@ fn handle_capture(cfg: &snip_types::Config, save_dir: &PathBuf) {
     }
 
     // Step 7: Show capture preview popup (thumbnail + info text)
-    if let Err(e) = preview::show_preview(&output_path, clipboard_ok) {
+    if let Err(e) = preview::show_preview(
+        &output_path,
+        &thumb_rgb,
+        thumb_w,
+        thumb_h,
+        orig_w,
+        orig_h,
+        clipboard_ok,
+    ) {
         warn!("handle_capture: preview failed: {}", e);
         // Non-fatal — capture was still successful
     }

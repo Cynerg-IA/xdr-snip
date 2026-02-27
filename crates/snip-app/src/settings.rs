@@ -115,6 +115,9 @@ static mut SAVE_CLICKED: bool = false;
 /// Handle to the settings dialog window.
 static mut SETTINGS_HWND: HWND = HWND(ptr::null_mut());
 
+/// Cached background brush for WM_CTLCOLORSTATIC (created once, reused).
+static mut BG_BRUSH: HBRUSH = HBRUSH(ptr::null_mut());
+
 // ======================== PUBLIC API ========================
 
 /// Opens the settings dialog modally, blocking until the user closes it.
@@ -252,7 +255,7 @@ unsafe extern "system" fn settings_wndproc(
                     }
                 }
                 ID_SAVE => {
-                    debug!("settings_wndproc: Save clicked");
+                    info!("settings_wndproc: Save clicked");
 
                     // Read values from controls
                     let path_text = GetDlgItem(Some(hwnd), ID_PATH_EDIT)
@@ -265,18 +268,22 @@ unsafe extern "system" fn settings_wndproc(
                         })
                         .unwrap_or(85);
 
-                    debug!(
+                    info!(
                         "settings_wndproc: save_dir='{}', quality={}",
                         path_text, quality
                     );
 
-                    // Update the stored config
-                    if let Some(ref mut cfg) = *ptr::addr_of_mut!(EDIT_CONFIG) {
+                    // Take the config out, modify locally, put back.
+                    // Avoids creating &mut references to the static.
+                    let mut config = ptr::addr_of_mut!(EDIT_CONFIG).replace(None);
+                    if let Some(ref mut cfg) = config {
                         cfg.capture.save_dir = path_text;
                         cfg.capture.quality =
                             quality.clamp(QUALITY_MIN as u32, QUALITY_MAX as u32);
                     }
+                    ptr::addr_of_mut!(EDIT_CONFIG).write(config);
 
+                    info!("settings_wndproc: config updated, destroying dialog");
                     SAVE_CLICKED = true;
                     let _ = DestroyWindow(hwnd);
                 }
@@ -303,8 +310,16 @@ unsafe extern "system" fn settings_wndproc(
         }
 
         WM_CTLCOLORSTATIC => {
-            // Make static labels have the dialog background color
-            let bg = CreateSolidBrush(COLORREF(DIALOG_BG));
+            // Make static labels have the dialog background color.
+            // Reuse a single cached brush to avoid GDI handle leak.
+            let brush = ptr::addr_of!(BG_BRUSH).read();
+            let bg = if brush.is_invalid() {
+                let b = CreateSolidBrush(COLORREF(DIALOG_BG));
+                BG_BRUSH = b;
+                b
+            } else {
+                brush
+            };
             windows::Win32::Graphics::Gdi::SetBkColor(
                 windows::Win32::Graphics::Gdi::HDC(wparam.0 as _),
                 COLORREF(DIALOG_BG),

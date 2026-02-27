@@ -4,6 +4,9 @@
 //! tray, registers the global hotkey, and runs a Win32 message loop that
 //! dispatches hotkey and tray-menu events.
 
+// Suppress the console window — this is a GUI application.
+#![windows_subsystem = "windows"]
+
 mod capture;
 mod clipboard;
 mod config;
@@ -182,16 +185,21 @@ fn handle_capture(cfg: &snip_types::Config, save_dir: &PathBuf) {
     }
 
     // Step 4: Copy to clipboard
-    if cfg.behavior.copy_to_clipboard {
-        if let Err(e) = clipboard::copy_to_clipboard(&output_path) {
-            warn!("handle_capture: clipboard copy failed: {}", e);
-            // Non-fatal — continue to notification
+    let clipboard_ok = if cfg.behavior.copy_to_clipboard {
+        match clipboard::copy_to_clipboard(&output_path) {
+            Ok(()) => true,
+            Err(e) => {
+                warn!("handle_capture: clipboard copy failed: {}", e);
+                false
+            }
         }
-    }
+    } else {
+        false
+    };
 
-    // Step 5: Show notification
+    // Step 5: Show notification with capture details
     if cfg.behavior.show_notification {
-        if let Err(e) = notification::show_capture_notification(&output_path) {
+        if let Err(e) = notification::show_capture_notification(&output_path, clipboard_ok) {
             warn!("handle_capture: notification failed: {}", e);
             // Non-fatal
         }

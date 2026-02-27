@@ -115,9 +115,10 @@ fn default_quality() -> u32 {
     85
 }
 
-/// Default save directory using tilde notation for portability.
+/// Default save directory — `~/Pictures/HDR-Snips` for clean separation from
+/// other screenshot tools.
 fn default_save_dir() -> String {
-    "~/Pictures/Screenshots".to_string()
+    "~/Pictures/HDR-Snips".to_string()
 }
 
 /// Default filename pattern with timestamp placeholder.

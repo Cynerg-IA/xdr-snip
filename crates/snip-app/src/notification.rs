@@ -2,11 +2,12 @@
 //!
 //! For the MVP we use the classic Shell_NotifyIcon balloon rather than the
 //! modern ToastNotification API.  This avoids COM/WinRT initialization
-//! complexity while still displaying a visible notification with the file path.
+//! complexity while still displaying a visible notification with capture details.
 
 use std::mem;
 use std::path::Path;
 
+use image::ImageReader;
 use snip_types::SnipError;
 use tracing::{debug, error, info, warn};
 use windows::Win32::Foundation::HWND;
@@ -24,15 +25,58 @@ const NOTIFY_ICON_ID: u32 = 1;
 
 /// Shows a balloon notification indicating a screenshot was captured.
 ///
-/// Creates a temporary notification-area icon, displays a balloon tip with
-/// "Screenshot saved" and the file path, then removes the icon.
+/// Reads the file to determine dimensions and size, then displays a
+/// balloon tip with summary info.
+///
+/// # Arguments
+/// * `jpeg_path` — path to the saved JPEG file.
+/// * `copied_to_clipboard` — whether the image was copied to clipboard.
 ///
 /// # Errors
 /// Returns [`SnipError::Notification`] if the Win32 call fails.
-pub fn show_capture_notification(jpeg_path: &Path) -> Result<(), SnipError> {
+pub fn show_capture_notification(
+    jpeg_path: &Path,
+    copied_to_clipboard: bool,
+) -> Result<(), SnipError> {
     info!(
-        "show_capture_notification: path={}",
-        jpeg_path.display()
+        "show_capture_notification: path={}, clipboard={}",
+        jpeg_path.display(),
+        copied_to_clipboard
+    );
+
+    // Read file size
+    let file_size = jpeg_path
+        .metadata()
+        .map(|m| m.len())
+        .unwrap_or(0);
+    let size_str = format_file_size(file_size);
+
+    // Read image dimensions (header only, no full decode)
+    let dims = ImageReader::open(jpeg_path)
+        .ok()
+        .and_then(|r| r.into_dimensions().ok());
+
+    // Build notification body
+    let mut body = String::with_capacity(128);
+
+    if let Some((w, h)) = dims {
+        body.push_str(&format!("{} x {} | {}", w, h, size_str));
+    } else {
+        body.push_str(&size_str);
+    }
+
+    if copied_to_clipboard {
+        body.push_str("\nCopied to clipboard");
+    }
+
+    // Show the filename (just the name, not full path — no PII)
+    if let Some(name) = jpeg_path.file_name() {
+        body.push_str(&format!("\n{}", name.to_string_lossy()));
+    }
+
+    debug!(
+        "show_capture_notification: title='Screenshot saved', body='{}'",
+        body
     );
 
     // Load the system information icon as a fallback
@@ -50,17 +94,14 @@ pub fn show_capture_notification(jpeg_path: &Path) -> Result<(), SnipError> {
     nid.uCallbackMessage = WM_TRAY_CALLBACK;
     nid.hIcon = icon;
 
-    // Set tooltip text: "HDR Snip"
+    // Set tooltip text
     set_wide_string(&mut nid.szTip, "HDR Snip");
 
-    // Set balloon title
+    // Set balloon title and body
     set_wide_string(&mut nid.szInfoTitle, "Screenshot saved");
-
-    // Set balloon body: the file path (truncated if too long for the buffer)
-    let body = jpeg_path.to_string_lossy();
     set_wide_string(&mut nid.szInfo, &body);
 
-    // Add the temporary icon
+    // Add the notification icon
     // SAFETY: Shell_NotifyIconW is safe with a properly initialized NOTIFYICONDATAW.
     let added = unsafe { Shell_NotifyIconW(NIM_ADD, &nid) };
     if !added.as_bool() {
@@ -76,11 +117,6 @@ pub fn show_capture_notification(jpeg_path: &Path) -> Result<(), SnipError> {
     }
 
     debug!("show_capture_notification: balloon displayed");
-
-    // We intentionally do NOT delete the icon immediately — Windows needs time
-    // to show the balloon.  The icon will be cleaned up on application exit
-    // or on the next notification (NIM_MODIFY).
-
     info!("show_capture_notification: notification shown successfully");
     Ok(())
 }
@@ -104,6 +140,8 @@ pub fn remove_notification_icon() {
     }
 }
 
+// ======================== HELPERS ========================
+
 /// Copies a Rust `&str` into a fixed-size `u16` wide-string buffer, truncating
 /// if necessary and always null-terminating.
 fn set_wide_string(buf: &mut [u16], text: &str) {
@@ -111,4 +149,15 @@ fn set_wide_string(buf: &mut [u16], text: &str) {
     let wide: Vec<u16> = text.encode_utf16().take(max_chars).collect();
     buf[..wide.len()].copy_from_slice(&wide);
     buf[wide.len()] = 0; // null terminator
+}
+
+/// Formats a byte count into a human-readable string (KB/MB).
+fn format_file_size(bytes: u64) -> String {
+    if bytes >= 1_048_576 {
+        format!("{:.1} MB", bytes as f64 / 1_048_576.0)
+    } else if bytes >= 1024 {
+        format!("{} KB", bytes / 1024)
+    } else {
+        format!("{} B", bytes)
+    }
 }

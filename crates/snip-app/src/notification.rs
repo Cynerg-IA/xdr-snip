@@ -81,10 +81,8 @@ pub fn show_capture_notification(
         body.push_str("\nCopied to clipboard");
     }
 
-    // Show the filename (just the name, not full path — no PII)
-    if let Some(name) = jpeg_path.file_name() {
-        body.push_str(&format!("\n{}", name.to_string_lossy()));
-    }
+    // Show the full save path so the user knows where the file went
+    body.push_str(&format!("\n{}", jpeg_path.display()));
 
     debug!(
         "show_capture_notification: title='Screenshot saved', body='{}'",
@@ -117,7 +115,7 @@ pub fn show_capture_notification(
     set_wide_string(&mut nid.szInfoTitle, "Screenshot saved");
     set_wide_string(&mut nid.szInfo, &body);
 
-    // Add the notification icon (or modify if it already exists from a previous capture)
+    // Add the notification icon and show the balloon.
     // SAFETY: Shell_NotifyIconW is safe with a properly initialized NOTIFYICONDATAW.
     let added = unsafe { Shell_NotifyIconW(NIM_ADD, &nid) };
     if !added.as_bool() {
@@ -132,7 +130,16 @@ pub fn show_capture_notification(
         }
     }
 
-    debug!("show_capture_notification: balloon displayed");
+    // Immediately remove the tray icon so the ugly blue "i" doesn't linger.
+    // On Windows 10/11 the balloon is converted to a toast notification that
+    // persists in the action center independently of the tray icon.
+    let mut nid_del: NOTIFYICONDATAW = unsafe { mem::zeroed() };
+    nid_del.cbSize = mem::size_of::<NOTIFYICONDATAW>() as u32;
+    nid_del.hWnd = notify_hwnd;
+    nid_del.uID = NOTIFY_ICON_ID;
+    let _ = unsafe { Shell_NotifyIconW(NIM_DELETE, &nid_del) };
+    debug!("show_capture_notification: tray icon removed (toast persists)");
+
     info!("show_capture_notification: notification shown successfully");
     Ok(())
 }

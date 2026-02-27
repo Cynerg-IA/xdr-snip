@@ -13,6 +13,7 @@ mod config;
 mod hotkey;
 mod notification;
 mod overlay;
+mod preview;
 mod tray;
 
 use std::fs;
@@ -144,6 +145,7 @@ fn run() -> Result<(), SnipError> {
     }
 
     // Cleanup
+    preview::close_preview();
     notification::remove_notification_icon();
     info!("main: cleanup complete");
 
@@ -215,6 +217,12 @@ fn handle_capture(cfg: &snip_types::Config, save_dir: &PathBuf) {
             warn!("handle_capture: notification failed: {}", e);
             // Non-fatal
         }
+    }
+
+    // Step 6: Show brief thumbnail preview in bottom-right corner
+    if let Err(e) = preview::show_preview(&output_path) {
+        warn!("handle_capture: preview failed: {}", e);
+        // Non-fatal — capture was still successful
     }
 
     info!("handle_capture: capture workflow complete");

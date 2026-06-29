@@ -295,7 +295,7 @@ fn handle_capture(cfg: &snip_types::Config, save_dir: &PathBuf) {
         let h = region.h;
 
         // Spawn encoding on a background thread so the main loop stays responsive.
-        // AVIF at high quality can take 10+ seconds; without threading the UI freezes.
+        // Encoding can take several seconds; without threading the UI freezes.
         let encode_handle = std::thread::spawn(move || {
             capture::encode_image(&pixels_rgb, w, h, format, &options, &out_path, raw_hdr.as_ref())
         });

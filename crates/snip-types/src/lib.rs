@@ -17,7 +17,6 @@ pub enum OutputFormat {
     Png,
     #[serde(rename = "webp")]
     WebP,
-    Avif,
     Tiff,
     Bmp,
     Qoi,
@@ -32,7 +31,6 @@ impl OutputFormat {
             Self::Jpeg => "jpg",
             Self::Png => "png",
             Self::WebP => "webp",
-            Self::Avif => "avif",
             Self::Tiff => "tiff",
             Self::Bmp => "bmp",
             Self::Qoi => "qoi",
@@ -46,7 +44,6 @@ impl OutputFormat {
             Self::Jpeg => "JPEG",
             Self::Png => "PNG",
             Self::WebP => "WebP",
-            Self::Avif => "AVIF",
             Self::Tiff => "TIFF",
             Self::Bmp => "BMP",
             Self::Qoi => "QOI",
@@ -59,7 +56,6 @@ impl OutputFormat {
         Self::Jpeg,
         Self::Png,
         Self::WebP,
-        Self::Avif,
         Self::Tiff,
         Self::Bmp,
         Self::Qoi,
@@ -225,28 +221,6 @@ impl Default for WebPOptions {
     }
 }
 
-/// AVIF-specific encoding options.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AvifOptions {
-    /// Quality (1-100). Higher = better quality, larger.
-    #[serde(default = "default_avif_quality")]
-    pub quality: u8,
-
-    /// Speed (4-10). Lower = slower but better compression.
-    /// Speeds 1-3 are clamped to 4 (impractical for screenshots).
-    #[serde(default = "default_avif_speed")]
-    pub speed: u8,
-}
-
-impl Default for AvifOptions {
-    fn default() -> Self {
-        Self {
-            quality: default_avif_quality(),
-            speed: default_avif_speed(),
-        }
-    }
-}
-
 /// TIFF compression options.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -377,8 +351,6 @@ pub struct FormatOptions {
     #[serde(default)]
     pub webp: WebPOptions,
     #[serde(default)]
-    pub avif: AvifOptions,
-    #[serde(default)]
     pub tiff: TiffOptions,
     #[serde(default)]
     pub exr: ExrOptions,
@@ -390,7 +362,6 @@ impl Default for FormatOptions {
             jpeg: JpegOptions::default(),
             png: PngOptions::default(),
             webp: WebPOptions::default(),
-            avif: AvifOptions::default(),
             tiff: TiffOptions::default(),
             exr: ExrOptions::default(),
         }
@@ -531,16 +502,6 @@ fn default_png_compression() -> u8 {
 /// Default WebP lossy quality.
 fn default_webp_quality() -> f32 {
     80.0
-}
-
-/// Default AVIF quality.
-fn default_avif_quality() -> u8 {
-    80
-}
-
-/// Default AVIF speed (1=slowest/best, 10=fastest/worst).
-fn default_avif_speed() -> u8 {
-    4
 }
 
 /// Default save directory — `~/Pictures/XDR-Snips` for clean separation from

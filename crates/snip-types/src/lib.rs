@@ -438,6 +438,35 @@ impl Default for Config {
     }
 }
 
+/// Auto-resize (downscale) options applied after capture.
+///
+/// When enabled, captures wider than `max_width` or taller than `max_height`
+/// are scaled down proportionally so both dimensions fit within the limits.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResizeOptions {
+    /// Whether automatic downscaling is enabled.
+    #[serde(default = "default_resize_enabled")]
+    pub enabled: bool,
+
+    /// Maximum allowed width after downscaling.
+    #[serde(default = "default_resize_max_width")]
+    pub max_width: u32,
+
+    /// Maximum allowed height after downscaling.
+    #[serde(default = "default_resize_max_height")]
+    pub max_height: u32,
+}
+
+impl Default for ResizeOptions {
+    fn default() -> Self {
+        Self {
+            enabled: default_resize_enabled(),
+            max_width: default_resize_max_width(),
+            max_height: default_resize_max_height(),
+        }
+    }
+}
+
 /// Capture-related settings: output format, encoding options, directory, naming.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CaptureConfig {
@@ -456,6 +485,10 @@ pub struct CaptureConfig {
     /// Filename template. `{timestamp}` is replaced with `YYYYMMDD_HHmmss`.
     #[serde(default = "default_filename_pattern")]
     pub filename_pattern: String,
+
+    /// Auto-resize (downscale) after capture, before file save + clipboard.
+    #[serde(default)]
+    pub resize: ResizeOptions,
 }
 
 impl Default for CaptureConfig {
@@ -465,6 +498,7 @@ impl Default for CaptureConfig {
             format_options: FormatOptions::default(),
             save_dir: default_save_dir(),
             filename_pattern: default_filename_pattern(),
+            resize: ResizeOptions::default(),
         }
     }
 }
@@ -564,6 +598,21 @@ fn default_true() -> bool {
     true
 }
 
+/// Default auto-resize enabled: false.
+fn default_resize_enabled() -> bool {
+    false
+}
+
+/// Default max width for auto-resize: 2560 pixels.
+fn default_resize_max_width() -> u32 {
+    2560
+}
+
+/// Default max height for auto-resize: 2560 pixels.
+fn default_resize_max_height() -> u32 {
+    2560
+}
+
 // ======================== GEOMETRY ========================
 
 /// A rectangular screen region in pixel coordinates.
@@ -639,6 +688,27 @@ mod tests {
         assert!(cfg.behavior.show_notification);
         assert_eq!(cfg.hotkey.key, "PrintScreen");
         assert!(cfg.hotkey.modifiers.is_empty());
+    }
+
+    #[test]
+    fn resize_config_defaults() {
+        let cfg = Config::default();
+        assert!(!cfg.capture.resize.enabled);
+        assert_eq!(cfg.capture.resize.max_width, 2560);
+        assert_eq!(cfg.capture.resize.max_height, 2560);
+    }
+
+    #[test]
+    fn resize_config_serialization_roundtrip() {
+        let mut cfg = Config::default();
+        cfg.capture.resize.enabled = true;
+        cfg.capture.resize.max_width = 3840;
+        cfg.capture.resize.max_height = 2160;
+        let serialized = toml::to_string(&cfg).expect("serialize");
+        let deserialized: Config = toml::from_str(&serialized).expect("deserialize");
+        assert!(deserialized.capture.resize.enabled);
+        assert_eq!(deserialized.capture.resize.max_width, 3840);
+        assert_eq!(deserialized.capture.resize.max_height, 2160);
     }
 
     #[test]

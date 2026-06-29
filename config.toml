@@ -3,6 +3,13 @@ format = "jpeg"
 save_dir = "~/Pictures/XDR-Snips"
 filename_pattern = "screenshot_{timestamp}"
 
+# Auto-resize (downscale) captures bigger than these limits.
+# Scaling preserves aspect ratio so both dimensions fit within the caps.
+[capture.resize]
+enabled = false
+max_width = 2560
+max_height = 2560
+
 [capture.format_options.jpeg]
 quality = 85
 chroma_subsampling = "4:2:2"

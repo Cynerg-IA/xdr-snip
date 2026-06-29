@@ -134,13 +134,23 @@ const ID_RESET_RECOMMENDED: i32 = 181;
 /// Control ID for the "Best Preset" button (switches to WebP lossy 85).
 const ID_BEST_COMPROMISE: i32 = 182;
 
+// --- Auto-resize controls ---
+/// Control ID for the Auto-resize checkbox.
+const ID_RESIZE_CHECK: i32 = 200;
+
+/// Control ID for the max-width spin (up-down) control + accompanying edit.
+const ID_RESIZE_WIDTH: i32 = 201;
+
+/// Control ID for the max-height spin (up-down) control + accompanying edit.
+const ID_RESIZE_HEIGHT: i32 = 202;
+
 // ======================== LAYOUT CONSTANTS ========================
 
 /// Dialog width in pixels.
 const DLG_W: i32 = 500;
 
 /// Dialog height in pixels (includes title bar + borders).
-const DLG_H: i32 = 470;
+const DLG_H: i32 = 490;
 
 /// Left/right margin for controls.
 const MARGIN: i32 = 20;
@@ -515,6 +525,23 @@ unsafe fn handle_save(hwnd: HWND) {
         ExrCompression::Zip16
     };
 
+    // Read resize options
+    let resize_enabled = GetDlgItem(Some(hwnd), ID_RESIZE_CHECK)
+        .map(|h| SendMessageW(h, BM_GETCHECK, None, None).0 as usize == BST_CHECKED)
+        .unwrap_or(false);
+    let resize_width: u32 = GetDlgItem(Some(hwnd), ID_RESIZE_WIDTH)
+        .and_then(|h| {
+            let txt = get_text(h);
+            txt.parse().ok()
+        })
+        .unwrap_or(2560);
+    let resize_height: u32 = GetDlgItem(Some(hwnd), ID_RESIZE_HEIGHT)
+        .and_then(|h| {
+            let txt = get_text(h);
+            txt.parse().ok()
+        })
+        .unwrap_or(2560);
+
     info!(
         "handle_save: format={}, save_dir='{}'",
         format, path_text
@@ -544,6 +571,11 @@ unsafe fn handle_save(hwnd: HWND) {
             exr: ExrOptions {
                 compression: exr_compression,
             },
+        };
+        cfg.capture.resize = snip_types::ResizeOptions {
+            enabled: resize_enabled,
+            max_width: resize_width,
+            max_height: resize_height,
         };
     }
     ptr::addr_of_mut!(EDIT_CONFIG).write(config);
@@ -585,18 +617,20 @@ unsafe fn create_controls(hwnd: HWND) {
     let font = GetStockObject(DEFAULT_GUI_FONT);
 
     // Read current values from the stored config.
-    let (save_dir, format, opts) = {
+    let (save_dir, format, opts, resize_cfg) = {
         let cfg = &*ptr::addr_of!(EDIT_CONFIG);
         match cfg {
             Some(c) => (
                 c.capture.save_dir.clone(),
                 c.capture.format,
                 c.capture.format_options.clone(),
+                c.capture.resize.clone(),
             ),
             None => (
                 "~/Pictures/XDR-Snips".to_string(),
                 OutputFormat::Jpeg,
                 FormatOptions::default(),
+                snip_types::ResizeOptions::default(),
             ),
         }
     };
@@ -691,6 +725,11 @@ unsafe fn create_controls(hwnd: HWND) {
 
     // Show standard options for the current format, hide all others
     show_format_options(hwnd, format);
+
+    // ─── Section 5: Auto-resize ───
+    create_resize_controls(
+        hwnd, hinstance, font, &opts, resize_cfg,
+    );
 
     // ─── Bottom row: Advanced checkbox (left) + Save/Cancel (right) ───
     let btn_y = DLG_H - 75;
@@ -973,6 +1012,88 @@ unsafe fn create_exr_controls(
         }
     }
     SendMessageW(combo, CB_SETCURSEL, Some(WPARAM(sel)), None);
+}
+
+// ======================== AUTO-RESIZE CONTROLS ========================
+
+/// Creates the auto-resize section: checkbox + max-width input + max-height input.
+///
+/// Pleases at the bottom of the options area, above the bottom row buttons.
+/// The controls are always visible (not affiliated the "Advanced" checkbox).
+unsafe fn create_resize_controls(
+    hwnd: HWND,
+    hi: HINSTANCE,
+    font: windows::Win32::Graphics::Gdi::HGDIOBJ,
+    _opts: &FormatOptions,
+    resize: &snip_types::ResizeOptions,
+) {
+    let inner_w = DLG_W - MARGIN * 2;
+
+    // Separate from format options with a gap — hover below advanced area
+    let y = ADVANCED_Y_START + 60;
+
+    // Section header
+    send_font(
+        create_child(
+            hwnd, hi, w!("STATIC"), "Auto-resize (downscale crops exceeding these limits):",
+            MARGIN, y, inner_w, 20, 0,
+        ), font,
+    );
+
+    let mut y = y + 20 + LABEL_GAP;
+
+    // Resize checkbox — BS_AUTOCHECKBOX = 0x0003
+    let resize_check = create_child(
+        hwnd, hi, w!("BUTTON"), "Enable auto-resize",
+        MARGIN, y, 220, 22, ID_RESIZE_CHECK,
+    );
+    SetWindowLongW(resize_check, GWL_STYLE, (GetWindowLongW(resize_check, GWL_STYLE) & !0x000F) | 0x0003);
+    send_font(resize_check, font);
+
+    // Set initial check state
+    if resize.enabled {
+        SendMessageW(resize_check, windows::Win32::UI::WindowsAndMessaging::BM_SETCHECK, Some(WPARAM(BST_CHECKED)), None);
+    }
+
+    y += 22 + SECTION_SPACE;
+
+    // Max width label
+    send_font(
+        create_child(
+            hwnd, hi, w!("STATIC"), "Max width (px):",
+            MARGIN, y, 120, 20, 0,
+        ), font,
+    );
+    y += 20 + LABEL_GAP;
+
+    // Max width edit (numeric)
+    let width_edit = create_child(
+        hwnd, hi, w!("EDIT"), &format!("{}", resize.max_width),
+        MARGIN, y, inner_w, CTRL_H, ID_RESIZE_WIDTH,
+    );
+    send_font(width_edit, font);
+    let wstyle = GetWindowLongW(width_edit, GWL_STYLE);
+    SetWindowLongW(width_edit, GWL_STYLE, wstyle | WS_BORDER.0 as i32 | 0x0008); // ES_NUMBER
+
+    y += CTRL_H + SECTION_SPACE;
+
+    // Max height label
+    send_font(
+        create_child(
+            hwnd, hi, w!("STATIC"), "Max height (px):",
+            MARGIN, y, 120, 20, 0,
+        ), font,
+    );
+    y += 20 + LABEL_GAP;
+
+    // Max height edit (numeric)
+    let height_edit = create_child(
+        hwnd, hi, w!("EDIT"), &format!("{}", resize.max_height),
+        MARGIN, y, inner_w, CTRL_H, ID_RESIZE_HEIGHT,
+    );
+    send_font(height_edit, font);
+    let hstyle = GetWindowLongW(height_edit, GWL_STYLE);
+    SetWindowLongW(height_edit, GWL_STYLE, hstyle | WS_BORDER.0 as i32 | 0x0008); // ES_NUMBER
 }
 
 // ======================== FORMAT OPTIONS VISIBILITY ========================

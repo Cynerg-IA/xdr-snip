@@ -281,6 +281,38 @@ fn handle_capture(cfg: &snip_types::Config, save_dir: &PathBuf) {
     let orig_w = region.w;
     let orig_h = region.h;
 
+    // Step 5b: Auto-resize (downscale) — applied to BOTH file and clipboard.
+    // Downscale ONCE on the shared buffer so file and clipboard stay identical.
+    let resize_cfg = &cfg.capture.resize;
+    if resize_cfg.enabled && (region.w > resize_cfg.max_width || region.h > resize_cfg.max_height) {
+        debug!(
+            "handle_capture: auto-resize requested {}x{} -> caps {}x{}",
+            region.w, region.h, resize_cfg.max_width, resize_cfg.max_height
+        );
+
+        let new_w = region.w.min(resize_cfg.max_width);
+        let new_h = region.h.min(resize_cfg.max_height);
+
+        // Compute aspect-ratio-preserving scale factor so both dimensions fit.
+        let ratio = (new_w as f64 / region.w as f64).min(new_h as f64 / region.h as f64);
+        let resized_w = (region.w as f64 * ratio).round() as u32;
+        let resized_h = (region.h as f64 * ratio).round() as u32;
+
+        // Build an ImageBuffer from our RGB8 Vec, resize with Lanczos3, convert back.
+        if let Some(img) = image::ImageBuffer::<image::Rgb<u8>, Vec<u8>>::from_raw(
+            region.w, region.h, pixels_rgb,
+        ) {
+            let resized_img = image::imageops::resize(&img, resized_w, resized_h, image::imageops::FilterType::Lanczos3);
+            pixels_rgb = resized_img.into_raw();
+            region.w = resized_w;
+            region.h = resized_h;
+            info!(
+                "handle_capture: auto-resized {}x{} -> {}x{} (ratio={:.3})",
+                orig_w, orig_h, resized_w, resized_h, ratio
+            );
+        }
+    }
+
     // Step 6: Encode in configured format (on background thread for UI responsiveness)
     if cfg.behavior.save_to_file {
         if pixels_rgb.is_empty() {

@@ -120,6 +120,12 @@ Single Rust binary using the `windows` crate for Win32/GDI and WinRT APIs:
 
 ## Release History
 
+### v0.4.7 — Lighter build + auto-resize + color-space audit (2026-06-29)
+
+- **Removed AVIF support** — the unused `ravif` (rav1e) encoder roughly doubled the exe size; dropped it. Output formats are now 7: JPEG, PNG, WebP, TIFF, BMP, QOI, OpenEXR. Existing `format = "avif"` configs auto-fall back to JPEG.
+- **Auto-resize on capture** — optional max width/height caps in Settings, applied to BOTH the saved file and the clipboard, aspect-preserved (Lanczos3), downscaled once on the shared buffer.
+- **Color-space handling audit** — documented the full sRGB / Display P3 / Rec.2020 / HDR10 / GDI-fallback handling matrix in `COLORSPACE.md` (no logic changes; verdicts OK).
+
 ### v0.4.6 — Preset buttons: Reset Recommended + Best Compromise (2026-02-28)
 
 - **"Reset Recommended" button** — one-click reset of the current format's options to recommended defaults (JPEG: q85/4:2:2, PNG: comp6/Adaptive, WebP: lossy/q85, AVIF: q80/speed6, TIFF: LZW, EXR: ZIP16)

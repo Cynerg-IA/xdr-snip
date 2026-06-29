@@ -9,7 +9,7 @@
 //! individual channels exceed sRGB but luminance is SDR — uses
 //! max-channel Reinhard to compress into gamut while preserving hue.
 //!
-//! Supports 8 output formats: JPEG, PNG, WebP, AVIF, TIFF, BMP, QOI, OpenEXR.
+//! Supports 7 output formats: JPEG, PNG, WebP, TIFF, BMP, QOI, OpenEXR.
 //! OpenEXR preserves raw HDR pixel data without tone mapping.
 
 use std::fs::File;
@@ -72,7 +72,6 @@ pub fn encode_image(
         OutputFormat::Jpeg => encode_jpeg_with_options(rgb_pixels, width, height, &options.jpeg, output),
         OutputFormat::Png => encode_png(rgb_pixels, width, height, &options.png, output),
         OutputFormat::WebP => encode_webp(rgb_pixels, width, height, &options.webp, output),
-        OutputFormat::Avif => encode_avif(rgb_pixels, width, height, &options.avif, output),
         OutputFormat::Tiff => encode_tiff(rgb_pixels, width, height, &options.tiff, output),
         OutputFormat::Bmp => encode_bmp(rgb_pixels, width, height, output),
         OutputFormat::Qoi => encode_qoi(rgb_pixels, width, height, output),
@@ -233,53 +232,6 @@ fn encode_webp(
         .map_err(|e| SnipError::CaptureFailed(format!("WebP write failed: {}", e)))?;
 
     debug!("encode_webp: wrote {} bytes", encoded.len());
-    Ok(())
-}
-
-/// AVIF encoder via `ravif` crate.
-///
-/// Speed is clamped to 4-10. Speeds 1-3 are impractical for screenshots:
-/// a 5K image at speed=1 can take 2+ minutes and produce 500MB+ output.
-fn encode_avif(
-    rgb: &[u8],
-    w: u32,
-    h: u32,
-    opts: &snip_types::AvifOptions,
-    out: &Path,
-) -> Result<(), SnipError> {
-    let quality = opts.quality.clamp(1, 100) as f32;
-    let speed = opts.speed.clamp(4, 10);
-
-    if opts.speed < 4 {
-        warn!(
-            "encode_avif: configured speed={} clamped to 4 (speeds 1-3 are impractical for screenshots)",
-            opts.speed
-        );
-    }
-
-    debug!("encode_avif: encoding {}x{} (q={}, speed={})", w, h, quality, speed);
-
-    // Convert RGB8 to ravif's expected format
-    let pixels: Vec<rgb::RGB8> = rgb
-        .chunks_exact(3)
-        .map(|c| rgb::RGB8 { r: c[0], g: c[1], b: c[2] })
-        .collect();
-
-    let img = ravif::Img::new(pixels.as_slice(), w as usize, h as usize);
-
-    let encoder = ravif::Encoder::new()
-        .with_quality(quality)
-        .with_speed(speed);
-
-    let result = encoder
-        .encode_rgb(img)
-        .map_err(|e| SnipError::CaptureFailed(format!("AVIF encoding failed: {}", e)))?;
-
-    let file_len = result.avif_file.len();
-    std::fs::write(out, result.avif_file)
-        .map_err(|e| SnipError::CaptureFailed(format!("AVIF write failed: {}", e)))?;
-
-    debug!("encode_avif: wrote {} bytes", file_len);
     Ok(())
 }
 

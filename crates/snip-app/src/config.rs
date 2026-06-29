@@ -8,7 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use chrono::Local;
-use snip_types::{Config, SnipError};
+use snip_types::{Config, OutputFormat, SnipError};
 use tracing::{debug, info, warn};
 
 /// Name of the config directory under `%APPDATA%`.
@@ -55,9 +55,14 @@ pub fn load_config() -> Result<Config, SnipError> {
         raw.len()
     );
 
-    // Check for legacy config before parsing into the new struct
+    // Check for legacy config before parsing into the new struct,
+    // and remove deprecated formats (e.g. avif).
+    let removed_format = handle_removed_format(&raw);
     let migrated = migrate_legacy_config(&raw);
-    let parse_str = migrated.as_deref().unwrap_or(&raw);
+    let parse_str = removed_format
+        .or(migrated.clone())
+        .as_deref()
+        .unwrap_or(&raw);
 
     let config: Config = toml::from_str(parse_str).map_err(|e| {
         SnipError::Config(format!(
@@ -84,8 +89,21 @@ pub fn load_config() -> Result<Config, SnipError> {
     Ok(config)
 }
 
-/// Detects and migrates a pre-v0.4 legacy config.
+/// Validates loaded config and handles removed/deprecated formats.
 ///
+/// If the config specifies a format that no longer exists (e.g. after
+/// removing AVIF support), replaces it with `jpeg` before parsing.
+fn handle_removed_format(raw: &str) -> Option<String> {
+    if !raw.contains("format = \"avif\"") {
+        return None;
+    }
+    warn!("load_config: 'avif' format is no longer supported, falling back to jpeg");
+    let result = raw.replace("format = \"avif\"", "format = \"jpeg\"");
+    debug!("handle_removed_format: replaced avif with jpeg in config");
+    Some(result)
+}
+
+/// Detects and migrates a pre-v0.4 legacy config.///
 /// Legacy configs have a bare `quality = N` under `[capture]` but no `format`
 /// or `format_options` fields. This function:
 /// 1. Parses as raw TOML table to check for the legacy field.

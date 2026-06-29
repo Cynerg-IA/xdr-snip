@@ -2,7 +2,7 @@
 //!
 //! Shows a dialog with:
 //! - Save path text field + Browse button
-//! - Output format dropdown (JPEG, PNG, WebP, AVIF, TIFF, BMP, QOI, OpenEXR)
+//! - Output format dropdown (JPEG, PNG, WebP, TIFF, BMP, QOI, OpenEXR)
 //! - Per-format options in Standard mode (quality/compression only)
 //! - Advanced checkbox to reveal extra options (chroma subsampling, filters, etc.)
 //! - Save / Cancel buttons
@@ -14,7 +14,7 @@
 use std::ptr;
 
 use snip_types::{
-    AvifOptions, ChromaSubsampling, Config, ExrCompression, ExrOptions, FormatOptions,
+    ChromaSubsampling, Config, ExrCompression, ExrOptions, FormatOptions,
     JpegOptions, OutputFormat, PngFilter, PngOptions, SnipError, TiffCompression, TiffOptions,
     WebPOptions,
 };
@@ -115,15 +115,6 @@ const ID_WEBP_MODE_COMBO: i32 = 131;
 const ID_WEBP_QUALITY_LABEL: i32 = 132;
 const ID_WEBP_QUALITY_SLIDER: i32 = 133;
 const ID_WEBP_QUALITY_VALUE: i32 = 134;
-
-// --- AVIF option controls (standard) ---
-const ID_AVIF_QUALITY_LABEL: i32 = 140;
-const ID_AVIF_QUALITY_SLIDER: i32 = 141;
-const ID_AVIF_QUALITY_VALUE: i32 = 142;
-// --- AVIF option controls (advanced) ---
-const ID_AVIF_SPEED_LABEL: i32 = 143;
-const ID_AVIF_SPEED_SLIDER: i32 = 144;
-const ID_AVIF_SPEED_VALUE: i32 = 145;
 
 // --- TIFF option controls (advanced only) ---
 const ID_TIFF_COMPRESS_LABEL: i32 = 150;
@@ -508,10 +499,6 @@ unsafe fn handle_save(hwnd: HWND) {
     let webp_lossless = webp_mode_idx == 1;
     let webp_quality = read_slider(hwnd, ID_WEBP_QUALITY_SLIDER, 80) as f32;
 
-    // Read AVIF options
-    let avif_quality = read_slider(hwnd, ID_AVIF_QUALITY_SLIDER, 80) as u8;
-    let avif_speed = read_slider(hwnd, ID_AVIF_SPEED_SLIDER, 4) as u8;
-
     // Read TIFF options
     let tiff_idx = read_combo(hwnd, ID_TIFF_COMPRESS_COMBO, 1);
     let tiff_compression = if tiff_idx < TiffCompression::ALL.len() {
@@ -550,10 +537,6 @@ unsafe fn handle_save(hwnd: HWND) {
             webp: WebPOptions {
                 lossless: webp_lossless,
                 quality: webp_quality.clamp(25.0, 100.0),
-            },
-            avif: AvifOptions {
-                quality: avif_quality.clamp(50, 100),
-                speed: avif_speed.clamp(4, 10),
             },
             tiff: TiffOptions {
                 compression: tiff_compression,
@@ -677,14 +660,12 @@ unsafe fn create_controls(hwnd: HWND) {
     create_jpeg_controls(hwnd, hinstance, font, oy, inner_w, &opts.jpeg);
     create_png_controls(hwnd, hinstance, font, oy, inner_w, &opts.png);
     create_webp_controls(hwnd, hinstance, font, oy, inner_w, &opts.webp);
-    create_avif_controls(hwnd, hinstance, font, oy, inner_w, &opts.avif);
 
     // ─── Section 4: Advanced option controls ───
     let ay = ADVANCED_Y_START;
 
     create_jpeg_advanced(hwnd, hinstance, font, ay, inner_w, &opts.jpeg);
     create_png_advanced(hwnd, hinstance, font, ay, inner_w, &opts.png);
-    create_avif_advanced(hwnd, hinstance, font, ay, inner_w, &opts.avif);
     create_tiff_controls(hwnd, hinstance, font, ay, inner_w, &opts.tiff);
     create_exr_controls(hwnd, hinstance, font, ay, inner_w, &opts.exr);
 
@@ -871,42 +852,6 @@ unsafe fn create_webp_controls(
     send_font(vl, font);
 }
 
-/// AVIF standard: quality slider.
-unsafe fn create_avif_controls(
-    hwnd: HWND,
-    hi: HINSTANCE,
-    font: windows::Win32::Graphics::Gdi::HGDIOBJ,
-    base_y: i32,
-    inner_w: i32,
-    opts: &AvifOptions,
-) {
-    let mut y = base_y;
-
-    let ql = create_child(
-        hwnd, hi, w!("STATIC"), "Quality (50\u{2013}100):",
-        MARGIN, y, inner_w, 20, ID_AVIF_QUALITY_LABEL,
-    );
-    send_font(ql, font);
-    y += 20 + LABEL_GAP;
-
-    let slider = create_child(
-        hwnd, hi, w!("msctls_trackbar32"), "",
-        MARGIN, y, inner_w, 34, ID_AVIF_QUALITY_SLIDER,
-    );
-    // Minimum 50: AVIF below 50 produces poor quality and is slow
-    let range_lparam = ((100u32) << 16 | 50u32) as isize;
-    SendMessageW(slider, TBM_SETRANGE, Some(WPARAM(1)), Some(LPARAM(range_lparam)));
-    let clamped_q = (opts.quality as isize).max(50);
-    SendMessageW(slider, TBM_SETPOS, Some(WPARAM(1)), Some(LPARAM(clamped_q)));
-    y += 34 + 2;
-
-    let vl = create_child(
-        hwnd, hi, w!("STATIC"),
-        &format!("{}%", opts.quality),
-        MARGIN, y, inner_w, 20, ID_AVIF_QUALITY_VALUE,
-    );
-    send_font(vl, font);
-}
 
 // ======================== ADVANCED PER-FORMAT CONTROLS ========================
 
@@ -968,43 +913,6 @@ unsafe fn create_png_advanced(
         }
     }
     SendMessageW(combo, CB_SETCURSEL, Some(WPARAM(sel)), None);
-}
-
-/// AVIF advanced: speed slider.
-unsafe fn create_avif_advanced(
-    hwnd: HWND,
-    hi: HINSTANCE,
-    font: windows::Win32::Graphics::Gdi::HGDIOBJ,
-    base_y: i32,
-    inner_w: i32,
-    opts: &AvifOptions,
-) {
-    let mut y = base_y;
-
-    let sl = create_child(
-        hwnd, hi, w!("STATIC"), "Speed (4=slow/best \u{2013} 10=fastest):",
-        MARGIN, y, inner_w, 20, ID_AVIF_SPEED_LABEL,
-    );
-    send_font(sl, font);
-    y += 20 + LABEL_GAP;
-
-    let speed_slider = create_child(
-        hwnd, hi, w!("msctls_trackbar32"), "",
-        MARGIN, y, inner_w, 34, ID_AVIF_SPEED_SLIDER,
-    );
-    // Range 4-10: speeds 1-3 are impractical (minutes per encode on large images)
-    let speed_range = ((10u32) << 16 | 4u32) as isize;
-    SendMessageW(speed_slider, TBM_SETRANGE, Some(WPARAM(1)), Some(LPARAM(speed_range)));
-    let clamped_speed = opts.speed.max(4) as isize;
-    SendMessageW(speed_slider, TBM_SETPOS, Some(WPARAM(1)), Some(LPARAM(clamped_speed)));
-    y += 34 + 2;
-
-    let svl = create_child(
-        hwnd, hi, w!("STATIC"),
-        &avif_speed_label(opts.speed as i32),
-        MARGIN, y, inner_w, 20, ID_AVIF_SPEED_VALUE,
-    );
-    send_font(svl, font);
 }
 
 /// TIFF advanced: compression combo.
@@ -1112,16 +1020,6 @@ unsafe fn show_format_options(hwnd: HWND, format: OutputFormat) {
         show_control(hwnd, ID_WEBP_QUALITY_VALUE, SW_HIDE);
     }
 
-    // ─── AVIF ───
-    let avif_std = if format == OutputFormat::Avif { SW_SHOW } else { SW_HIDE };
-    let avif_adv = if format == OutputFormat::Avif && advanced { SW_SHOW } else { SW_HIDE };
-    show_control(hwnd, ID_AVIF_QUALITY_LABEL, avif_std);
-    show_control(hwnd, ID_AVIF_QUALITY_SLIDER, avif_std);
-    show_control(hwnd, ID_AVIF_QUALITY_VALUE, avif_std);
-    show_control(hwnd, ID_AVIF_SPEED_LABEL, avif_adv);
-    show_control(hwnd, ID_AVIF_SPEED_SLIDER, avif_adv);
-    show_control(hwnd, ID_AVIF_SPEED_VALUE, avif_adv);
-
     // ─── TIFF (advanced only) ───
     let tiff_adv = if format == OutputFormat::Tiff && advanced { SW_SHOW } else { SW_HIDE };
     show_control(hwnd, ID_TIFF_COMPRESS_LABEL, tiff_adv);
@@ -1219,24 +1117,6 @@ unsafe fn update_slider_labels(hwnd: HWND) {
         set_text(label, &format!("{}%", pos));
     }
 
-    // AVIF quality
-    if let (Ok(slider), Ok(label)) = (
-        GetDlgItem(Some(hwnd), ID_AVIF_QUALITY_SLIDER),
-        GetDlgItem(Some(hwnd), ID_AVIF_QUALITY_VALUE),
-    ) {
-        let pos = SendMessageW(slider, TBM_GETPOS, None, None).0 as i32;
-        set_text(label, &format!("{}%", pos));
-    }
-
-    // AVIF speed
-    if let (Ok(slider), Ok(label)) = (
-        GetDlgItem(Some(hwnd), ID_AVIF_SPEED_SLIDER),
-        GetDlgItem(Some(hwnd), ID_AVIF_SPEED_VALUE),
-    ) {
-        let pos = SendMessageW(slider, TBM_GETPOS, None, None).0 as i32;
-        set_text(label, &avif_speed_label(pos));
-    }
-
     // Update size estimate (reads current format from combo)
     if let Ok(combo) = GetDlgItem(Some(hwnd), ID_FORMAT_COMBO) {
         let idx = SendMessageW(combo, CB_GETCURSEL, None, None).0 as usize;
@@ -1265,7 +1145,6 @@ unsafe fn update_size_estimate(hwnd: HWND, format: OutputFormat) {
             let lossless = read_combo(hwnd, ID_WEBP_MODE_COMBO, 0) as i32;
             (quality, lossless)
         }
-        OutputFormat::Avif => (read_slider(hwnd, ID_AVIF_QUALITY_SLIDER, 80), 0),
         OutputFormat::Tiff => (read_combo(hwnd, ID_TIFF_COMPRESS_COMBO, 1) as i32, 0),
         OutputFormat::OpenExr => (read_combo(hwnd, ID_EXR_COMPRESS_COMBO, 3) as i32, 0),
         _ => (0, 0),
@@ -1293,9 +1172,6 @@ unsafe fn estimate_y_for_format(format: OutputFormat, advanced: bool, hwnd: HWND
         OutputFormat::Jpeg | OutputFormat::Png => {
             if advanced { ADVANCED_Y_START + 60 } else { OPTIONS_Y_START + 90 }
         }
-        OutputFormat::Avif => {
-            if advanced { ADVANCED_Y_START + 90 } else { OPTIONS_Y_START + 90 }
-        }
         OutputFormat::WebP => {
             let is_lossy = read_combo(hwnd, ID_WEBP_MODE_COMBO, 0) == 0;
             if is_lossy { OPTIONS_Y_START + 154 } else { OPTIONS_Y_START + 60 }
@@ -1309,7 +1185,7 @@ unsafe fn estimate_y_for_format(format: OutputFormat, advanced: bool, hwnd: HWND
 
 /// Estimated 1080p file size for the given format and settings.
 ///
-/// `param1` is quality (JPEG/WebP/AVIF), compression level (PNG), or
+/// `param1` is quality (JPEG/WebP), compression level (PNG), or
 /// compression index (TIFF/EXR). `param2` is 1 for WebP lossless, 0 otherwise.
 /// Estimates assume typical mixed-content 1920x1080 screenshots.
 fn size_estimate_text(format: OutputFormat, param1: i32, param2: i32) -> String {
@@ -1350,16 +1226,6 @@ fn size_estimate_text(format: OutputFormat, param1: i32, param2: i32) -> String 
                 }
             }
         }
-        OutputFormat::Avif => match param1 {
-            1..=30 => 40,
-            31..=50 => 80,
-            51..=70 => 130,
-            71..=80 => 200,
-            81..=90 => 400,
-            91..=95 => 700,
-            96..=100 => 1000,
-            _ => 200,
-        },
         OutputFormat::Tiff => match param1 {
             0 => 6000,  // None
             1 => 3500,  // LZW
@@ -1437,22 +1303,6 @@ fn png_compression_label(level: i32) -> String {
     }
 }
 
-/// Descriptive label for AVIF speed level.
-fn avif_speed_label(speed: i32) -> String {
-    let desc = match speed {
-        4 => "slow, best quality",
-        5..=6 => "balanced",
-        7..=8 => "fast, lower quality",
-        9..=10 => "fastest, lowest quality",
-        _ => "balanced",
-    };
-
-    if speed == 6 {
-        format!("{} \u{00B7} {} \u{00B7} Recommended", speed, desc)
-    } else {
-        format!("{} \u{00B7} {}", speed, desc)
-    }
-}
 
 // ======================== PRESET FUNCTIONS ========================
 
@@ -1476,7 +1326,6 @@ unsafe fn set_combo_selection(hwnd: HWND, id: i32, index: usize) {
 /// - JPEG: quality=85, chroma=4:2:2
 /// - PNG: compression=6, filter=Adaptive
 /// - WebP: lossy, quality=85
-/// - AVIF: quality=80, speed=6
 /// - TIFF: LZW
 /// - OpenEXR: ZIP16
 unsafe fn apply_recommended(hwnd: HWND, format: OutputFormat) {
@@ -1498,10 +1347,6 @@ unsafe fn apply_recommended(hwnd: HWND, format: OutputFormat) {
             show_control(hwnd, ID_WEBP_QUALITY_LABEL, SW_SHOW);
             show_control(hwnd, ID_WEBP_QUALITY_SLIDER, SW_SHOW);
             show_control(hwnd, ID_WEBP_QUALITY_VALUE, SW_SHOW);
-        }
-        OutputFormat::Avif => {
-            set_slider(hwnd, ID_AVIF_QUALITY_SLIDER, 80);
-            set_slider(hwnd, ID_AVIF_SPEED_SLIDER, 6);
         }
         OutputFormat::Tiff => {
             set_combo_selection(hwnd, ID_TIFF_COMPRESS_COMBO, 1); // LZW

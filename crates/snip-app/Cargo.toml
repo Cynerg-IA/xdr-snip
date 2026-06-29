@@ -33,9 +33,7 @@ jpeg-encoder = "0.6"
 # WebP encoding — lossy + lossless via libwebp
 webp = "0.3"
 
-# AVIF encoding via rav1e
-ravif = "0.11"
-rgb = "0.8"
+
 
 # Half-float (f16) conversion for HDR pixel data
 half = "2"

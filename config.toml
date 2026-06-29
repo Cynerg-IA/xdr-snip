@@ -15,10 +15,6 @@ filter = "adaptive"
 lossless = false
 quality = 80.0
 
-[capture.format_options.avif]
-quality = 80
-speed = 4
-
 [capture.format_options.tiff]
 compression = "lzw"
 

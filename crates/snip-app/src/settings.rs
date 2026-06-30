@@ -150,7 +150,7 @@ const ID_RESIZE_HEIGHT: i32 = 202;
 const DLG_W: i32 = 500;
 
 /// Dialog height in pixels (includes title bar + borders).
-const DLG_H: i32 = 490;
+const DLG_H: i32 = 600;
 
 /// Left/right margin for controls.
 const MARGIN: i32 = 20;
@@ -727,7 +727,14 @@ unsafe fn create_controls(hwnd: HWND) {
     // Show standard options for the current format, hide all others
     show_format_options(hwnd, format);
 
-    // ─── Section 5: Auto-resize ───
+    // ─── Section 5: Resize header ───
+    let resize_header = create_child(
+        hwnd, hinstance, w!("STATIC"), "Auto-resize (downscale crops exceeding these limits):",
+        MARGIN, DLG_H - 75 - 130 - 20, inner_w, 20, 0,
+    );
+    send_font(resize_header, font);
+
+    // ─── Section 6: Auto-resize ───
     create_resize_controls(
         hwnd, hinstance, font, &opts, &resize_cfg,
     );
@@ -1019,7 +1026,7 @@ unsafe fn create_exr_controls(
 
 /// Creates the auto-resize section: checkbox + max-width input + max-height input.
 ///
-/// Pleases at the bottom of the options area, above the bottom row buttons.
+/// Placed in a fixed ~130px band directly above the bottom Save/Cancel row.
 /// The controls are always visible (not affiliated the "Advanced" checkbox).
 unsafe fn create_resize_controls(
     hwnd: HWND,
@@ -1030,20 +1037,11 @@ unsafe fn create_resize_controls(
 ) {
     let inner_w = DLG_W - MARGIN * 2;
 
-    // Separate from format options with a gap — hover below advanced area
-    let y = ADVANCED_Y_START + 60;
+    // Reserved band directly above the Save/Cancel row (~130px tall)
+    let band_top = DLG_H - 75 - 130;
 
-    // Section header
-    send_font(
-        create_child(
-            hwnd, hi, w!("STATIC"), "Auto-resize (downscale crops exceeding these limits):",
-            MARGIN, y, inner_w, 20, 0,
-        ), font,
-    );
-
-    let mut y = y + 20 + LABEL_GAP;
-
-    // Resize checkbox — BS_AUTOCHECKBOX = 0x0003
+    // ── Row 1: "Enable auto-resize" checkbox ──
+    let y = band_top;
     let resize_check = create_child(
         hwnd, hi, w!("BUTTON"), "Enable auto-resize",
         MARGIN, y, 220, 22, ID_RESIZE_CHECK,
@@ -1051,46 +1049,40 @@ unsafe fn create_resize_controls(
     SetWindowLongW(resize_check, GWL_STYLE, (GetWindowLongW(resize_check, GWL_STYLE) & !0x000F) | 0x0003);
     send_font(resize_check, font);
 
-    // Set initial check state
     if resize.enabled {
         SendMessageW(resize_check, windows::Win32::UI::WindowsAndMessaging::BM_SETCHECK, Some(WPARAM(BST_CHECKED)), None);
     }
 
-    y += 22 + SECTION_SPACE;
+    // ── Row 2: Max width + Max height side by side ──
+    let ry = y + 22 + 8;
 
-    // Max width label
+    let half_w = (inner_w - 8) / 2;
+
+    // Max width (px) — left half
     send_font(
         create_child(
             hwnd, hi, w!("STATIC"), "Max width (px):",
-            MARGIN, y, 120, 20, 0,
+            MARGIN, ry, 90, 20, 0,
         ), font,
     );
-    y += 20 + LABEL_GAP;
-
-    // Max width edit (numeric)
     let width_edit = create_child(
         hwnd, hi, w!("EDIT"), &format!("{}", resize.max_width),
-        MARGIN, y, inner_w, CTRL_H, ID_RESIZE_WIDTH,
+        MARGIN, ry + 22, half_w, CTRL_H, ID_RESIZE_WIDTH,
     );
     send_font(width_edit, font);
     let wstyle = GetWindowLongW(width_edit, GWL_STYLE);
     SetWindowLongW(width_edit, GWL_STYLE, wstyle | WS_BORDER.0 as i32 | 0x0008); // ES_NUMBER
 
-    y += CTRL_H + SECTION_SPACE;
-
-    // Max height label
+    // Max height (px) — right half
     send_font(
         create_child(
             hwnd, hi, w!("STATIC"), "Max height (px):",
-            MARGIN, y, 120, 20, 0,
+            MARGIN + half_w + 8, ry, 90, 20, 0,
         ), font,
     );
-    y += 20 + LABEL_GAP;
-
-    // Max height edit (numeric)
     let height_edit = create_child(
         hwnd, hi, w!("EDIT"), &format!("{}", resize.max_height),
-        MARGIN, y, inner_w, CTRL_H, ID_RESIZE_HEIGHT,
+        MARGIN + half_w + 8, ry + 22, half_w, CTRL_H, ID_RESIZE_HEIGHT,
     );
     send_font(height_edit, font);
     let hstyle = GetWindowLongW(height_edit, GWL_STYLE);
@@ -1178,8 +1170,9 @@ unsafe fn show_format_options(hwnd: HWND, format: OutputFormat) {
     show_control(hwnd, ID_BEST_COMPROMISE, SW_SHOW);
 
     // Dynamic Y: read the size estimate position and place buttons 25px below
+    // Cap at the top of the auto-resize reserved band so buttons never overlap
     let estimate_y = estimate_y_for_format(format, advanced, hwnd);
-    let buttons_y = estimate_y + 25;
+    let buttons_y = (estimate_y + 25).min(DLG_H - 75 - 130 - 5);
     move_control_y(hwnd, ID_RESET_RECOMMENDED, buttons_y, 160, CTRL_H);
     // Place "Best Preset" to the right of "Reset Recommended"
     if let Ok(ctrl) = GetDlgItem(Some(hwnd), ID_BEST_COMPROMISE) {

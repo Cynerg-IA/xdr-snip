@@ -7,8 +7,8 @@ filename_pattern = "screenshot_{timestamp}"
 # Scaling preserves aspect ratio so both dimensions fit within the caps.
 [capture.resize]
 enabled = false
-max_width = 1500
-max_height = 1500
+max_width = 2048
+max_height = 2048
 
 [capture.format_options.jpeg]
 quality = 85

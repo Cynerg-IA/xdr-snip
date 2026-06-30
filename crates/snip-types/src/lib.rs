@@ -564,14 +564,14 @@ fn default_resize_enabled() -> bool {
     false
 }
 
-/// Default max width for auto-resize: 1500 pixels.
+/// Default max width for auto-resize: 2048 pixels.
 fn default_resize_max_width() -> u32 {
-    1500
+    2048
 }
 
-/// Default max height for auto-resize: 1500 pixels.
+/// Default max height for auto-resize: 2048 pixels.
 fn default_resize_max_height() -> u32 {
-    1500
+    2048
 }
 
 // ======================== GEOMETRY ========================
@@ -655,8 +655,8 @@ mod tests {
     fn resize_config_defaults() {
         let cfg = Config::default();
         assert!(!cfg.capture.resize.enabled);
-        assert_eq!(cfg.capture.resize.max_width, 1500);
-        assert_eq!(cfg.capture.resize.max_height, 1500);
+        assert_eq!(cfg.capture.resize.max_width, 2048);
+        assert_eq!(cfg.capture.resize.max_height, 2048);
     }
 
     #[test]

@@ -529,7 +529,7 @@ unsafe fn handle_save(hwnd: HWND) {
     let resize_enabled = GetDlgItem(Some(hwnd), ID_RESIZE_CHECK)
         .map(|h| SendMessageW(h, BM_GETCHECK, None, None).0 as usize == BST_CHECKED)
         .unwrap_or(false);
-    let resize_width: u32 = GetDlgItem(Some(hwnd), ID_RESIZE_WIDTH)
+    let resize_width: u32 = GetDlgItem(Some(hwnd), ID_RESIZE_WIDTH).ok()
         .and_then(|h| {
             let txt = get_text(h);
             txt.parse().ok()

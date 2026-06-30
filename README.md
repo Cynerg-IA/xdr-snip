@@ -1,9 +1,9 @@
 # XDR Snip
 
-[![Windows 11](https://img.shields.io/badge/Windows-11-0078D4?logo=windows11)](https://github.com/db-cynerg-ia/xdr-snip)
+[![Windows 11](https://img.shields.io/badge/Windows-11-0078D4?logo=windows11)](https://github.com/Cynerg-IA/xdr-snip)
 [![Rust](https://img.shields.io/badge/Rust-stable-DEA584?logo=rust)](https://www.rust-lang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Release](https://img.shields.io/github/v/release/db-cynerg-ia/xdr-snip)](https://github.com/db-cynerg-ia/xdr-snip/releases)
+[![Release](https://img.shields.io/github/v/release/Cynerg-IA/xdr-snip)](https://github.com/Cynerg-IA/xdr-snip/releases)
 
 <p align="center">
   <img src="assets/social-preview.png" alt="XDR Snip — HDR screenshot tool for Windows 11" width="720">
@@ -42,7 +42,7 @@ The selected region appears at full brightness with a cyan border. Escape or rig
 
 ## Install
 
-Download `xdr-snip.exe` from [Releases](https://github.com/db-cynerg-ia/xdr-snip/releases) and run it. No installation needed.
+Download `xdr-snip.exe` from [Releases](https://github.com/Cynerg-IA/xdr-snip/releases) and run it. No installation needed.
 
 > **Important: Unbind Windows Snipping Tool first!**
 >

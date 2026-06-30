@@ -9,8 +9,17 @@ $ErrorActionPreference = "Stop"
 $config = if ($Release) { "Release" } else { "Debug" }
 $distDir = Join-Path $PSScriptRoot "dist"
 
+# Read version from crates\snip-app\Cargo.toml
+$verLine = Select-String -Path (Join-Path $PSScriptRoot 'crates\snip-app\Cargo.toml') -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1
+if (!$verLine) {
+    Write-Host "ERROR: Could not find version in crates\snip-app\Cargo.toml" -ForegroundColor Red
+    exit 1
+}
+$version = $verLine.Matches[0].Groups[1].Value
+
 Write-Host "=== XDR Snip Build ===" -ForegroundColor Cyan
 Write-Host "Configuration: $config"
+Write-Host "Version: $version"
 
 # Ensure dist directory exists
 if (!(Test-Path $distDir)) {
@@ -35,7 +44,7 @@ if ($LASTEXITCODE -ne 0) {
 
 # Copy Rust exe to dist
 if (Test-Path $rustExe) {
-    Copy-Item $rustExe (Join-Path $distDir "xdr-snip.exe") -Force
+    Copy-Item $rustExe (Join-Path $distDir "xdr-snip-v$version.exe") -Force
 }
 Write-Host "xdr-snip: OK" -ForegroundColor Green
 

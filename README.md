@@ -120,6 +120,11 @@ Single Rust binary using the `windows` crate for Win32/GDI and WinRT APIs:
 
 ## Release History
 
+### v0.5.0 — Smaller binary: dead-code elimination (2026-06-30)
+
+- **Release profile**: LTO + strip + single codegen-unit + `panic = "abort"`. Eliminates dead/unused code across crates, drops debug symbols and unwinding tables — a significantly smaller exe with no feature changes.
+- No spec changes vs v0.4.7 (panics now abort instead of unwind; no functional impact — the app uses no `catch_unwind`).
+
 ### v0.4.7 — Lighter build + auto-resize + color-space audit (2026-06-29)
 
 - **Removed AVIF support** — the unused `ravif` (rav1e) encoder roughly doubled the exe size; dropped it. Output formats are now 7: JPEG, PNG, WebP, TIFF, BMP, QOI, OpenEXR. Existing `format = "avif"` configs auto-fall back to JPEG.

@@ -1,3 +1,9 @@
 [workspace]
 members = ["crates/snip-app", "crates/snip-types"]
 resolver = "2"
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+panic = "abort"

@@ -8,7 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use chrono::Local;
-use snip_types::{Config, OutputFormat, SnipError};
+use snip_types::{Config, SnipError};
 use tracing::{debug, info, warn};
 
 /// Name of the config directory under `%APPDATA%`.

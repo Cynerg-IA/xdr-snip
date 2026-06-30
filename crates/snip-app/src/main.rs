@@ -251,6 +251,46 @@ fn handle_capture(cfg: &snip_types::Config, save_dir: &PathBuf) {
         None
     };
 
+    // Step 3c: Auto-resize (downscale) on raw pixels so BOTH clipboard and file match.
+    // Downscale ONCE on the shared buffer so file and clipboard stay identical.
+    let resize_cfg = &cfg.capture.resize;
+    let capture_w = region.w;
+    let capture_h = region.h;
+    let mut orig_full: Option<(Vec<u8>, u32, u32)> = None;
+    if resize_cfg.enabled && (capture_w > resize_cfg.max_width || capture_h > resize_cfg.max_height) {
+        debug!(
+            "handle_capture: auto-resize requested {}x{} -> caps {}x{}",
+            capture_w, capture_h, resize_cfg.max_width, resize_cfg.max_height
+        );
+
+        if resize_cfg.keep_original {
+            debug!("handle_capture: keeping full-size original for auto-resize");
+            orig_full = Some((pixels_rgb.clone(), region.w, region.h));
+        }
+
+        let new_w = capture_w.min(resize_cfg.max_width);
+        let new_h = capture_h.min(resize_cfg.max_height);
+
+        // Compute aspect-ratio-preserving scale factor so both dimensions fit.
+        let ratio = (new_w as f64 / capture_w as f64).min(new_h as f64 / capture_h as f64);
+        let resized_w = (capture_w as f64 * ratio).round() as u32;
+        let resized_h = (capture_h as f64 * ratio).round() as u32;
+
+        // Build an ImageBuffer from our RGB8 Vec, resize with Lanczos3, convert back.
+        if let Some(img) = image::ImageBuffer::<image::Rgb<u8>, Vec<u8>>::from_raw(
+            capture_w, capture_h, std::mem::take(&mut pixels_rgb),
+        ) {
+            let resized_img = image::imageops::resize(&img, resized_w, resized_h, image::imageops::FilterType::Lanczos3);
+            pixels_rgb = resized_img.into_raw();
+            region.w = resized_w;
+            region.h = resized_h;
+            info!(
+                "handle_capture: auto-resized {}x{} -> {}x{} (ratio={:.3})",
+                capture_w, capture_h, resized_w, resized_h, ratio
+            );
+        }
+    }
+
     // Step 4: Generate output path with format-specific extension
     let filename = config::generate_filename(&cfg.capture.filename_pattern);
     let ext = cfg.capture.format.extension();
@@ -280,38 +320,6 @@ fn handle_capture(cfg: &snip_types::Config, save_dir: &PathBuf) {
         preview::generate_thumbnail(&pixels_rgb, region.w, region.h, 300, 300);
     let orig_w = region.w;
     let orig_h = region.h;
-
-    // Step 5b: Auto-resize (downscale) — applied to BOTH file and clipboard.
-    // Downscale ONCE on the shared buffer so file and clipboard stay identical.
-    let resize_cfg = &cfg.capture.resize;
-    if resize_cfg.enabled && (region.w > resize_cfg.max_width || region.h > resize_cfg.max_height) {
-        debug!(
-            "handle_capture: auto-resize requested {}x{} -> caps {}x{}",
-            region.w, region.h, resize_cfg.max_width, resize_cfg.max_height
-        );
-
-        let new_w = region.w.min(resize_cfg.max_width);
-        let new_h = region.h.min(resize_cfg.max_height);
-
-        // Compute aspect-ratio-preserving scale factor so both dimensions fit.
-        let ratio = (new_w as f64 / region.w as f64).min(new_h as f64 / region.h as f64);
-        let resized_w = (region.w as f64 * ratio).round() as u32;
-        let resized_h = (region.h as f64 * ratio).round() as u32;
-
-        // Build an ImageBuffer from our RGB8 Vec, resize with Lanczos3, convert back.
-        if let Some(img) = image::ImageBuffer::<image::Rgb<u8>, Vec<u8>>::from_raw(
-            region.w, region.h, std::mem::take(&mut pixels_rgb),
-        ) {
-            let resized_img = image::imageops::resize(&img, resized_w, resized_h, image::imageops::FilterType::Lanczos3);
-            pixels_rgb = resized_img.into_raw();
-            region.w = resized_w;
-            region.h = resized_h;
-            info!(
-                "handle_capture: auto-resized {}x{} -> {}x{} (ratio={:.3})",
-                orig_w, orig_h, resized_w, resized_h, ratio
-            );
-        }
-    }
 
     // Step 6: Encode in configured format (on background thread for UI responsiveness)
     if cfg.behavior.save_to_file {
@@ -347,6 +355,31 @@ fn handle_capture(cfg: &snip_types::Config, save_dir: &PathBuf) {
             Err(_) => {
                 error!("handle_capture: encoding thread panicked");
                 return;
+            }
+        }
+    }
+
+    // Step 6b: Save full-size original sibling file (only if keep_original was enabled
+    // and resize actually triggered). Same format, "_full" before extension.
+    if cfg.behavior.save_to_file {
+            if let Some((orig_pixels, orig_w, orig_h)) = &orig_full {
+            let filename = output_path.file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| String::from("screenshot"));
+            let full_filename = format!("{}_full", filename);
+            let full_path = output_path.with_file_name(format!("{}.{}", full_filename, ext));
+            info!(
+                "handle_capture: saving full-size original {}x{} -> {}",
+                orig_w, orig_h, full_path.display()
+            );
+            let full_format = cfg.capture.format;
+            let full_options = cfg.capture.format_options.clone();
+            let full_out = full_path.clone();
+            let full_pixels = orig_pixels.clone();
+            if let Err(e) = capture::encode_image(
+                &full_pixels, orig_w, orig_h, full_format, &full_options, &full_out, None,
+            ) {
+                error!("handle_capture: full-size original encode failed: {}", e);
             }
         }
     }

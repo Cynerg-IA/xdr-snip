@@ -144,6 +144,9 @@ const ID_RESIZE_WIDTH: i32 = 201;
 /// Control ID for the max-height spin (up-down) control + accompanying edit.
 const ID_RESIZE_HEIGHT: i32 = 202;
 
+/// Control ID for the "Keep full-size original" checkbox.
+const ID_RESIZE_KEEP: i32 = 203;
+
 // ======================== LAYOUT CONSTANTS ========================
 
 /// Dialog width in pixels.
@@ -529,6 +532,9 @@ unsafe fn handle_save(hwnd: HWND) {
     let resize_enabled = GetDlgItem(Some(hwnd), ID_RESIZE_CHECK)
         .map(|h| SendMessageW(h, BM_GETCHECK, None, None).0 as usize == BST_CHECKED)
         .unwrap_or(false);
+    let resize_keep = GetDlgItem(Some(hwnd), ID_RESIZE_KEEP)
+        .map(|h| SendMessageW(h, BM_GETCHECK, None, None).0 as usize == BST_CHECKED)
+        .unwrap_or(false);
     let resize_width: u32 = GetDlgItem(Some(hwnd), ID_RESIZE_WIDTH).ok()
         .and_then(|h| {
             let txt = get_text(h);
@@ -577,6 +583,7 @@ unsafe fn handle_save(hwnd: HWND) {
             enabled: resize_enabled,
             max_width: resize_width,
             max_height: resize_height,
+            keep_original: resize_keep,
         };
     }
     ptr::addr_of_mut!(EDIT_CONFIG).write(config);
@@ -1040,17 +1047,28 @@ unsafe fn create_resize_controls(
     // Reserved band directly above the Save/Cancel row (~130px tall)
     let band_top = DLG_H - 75 - 130;
 
-    // ── Row 1: "Enable auto-resize" checkbox ──
+    // ── Row 1: "Enable auto-resize" checkbox + "Keep full-size original" checkbox ──
     let y = band_top;
     let resize_check = create_child(
         hwnd, hi, w!("BUTTON"), "Enable auto-resize",
-        MARGIN, y, 220, 22, ID_RESIZE_CHECK,
+        MARGIN, y, 180, 22, ID_RESIZE_CHECK,
     );
     SetWindowLongW(resize_check, GWL_STYLE, (GetWindowLongW(resize_check, GWL_STYLE) & !0x000F) | 0x0003);
     send_font(resize_check, font);
 
     if resize.enabled {
         SendMessageW(resize_check, windows::Win32::UI::WindowsAndMessaging::BM_SETCHECK, Some(WPARAM(BST_CHECKED)), None);
+    }
+
+    let keep_check = create_child(
+        hwnd, hi, w!("BUTTON"), "Keep full-size original",
+        MARGIN + 186, y, 214, 22, ID_RESIZE_KEEP,
+    );
+    SetWindowLongW(keep_check, GWL_STYLE, (GetWindowLongW(keep_check, GWL_STYLE) & !0x000F) | 0x0003);
+    send_font(keep_check, font);
+
+    if resize.keep_original {
+        SendMessageW(keep_check, windows::Win32::UI::WindowsAndMessaging::BM_SETCHECK, Some(WPARAM(BST_CHECKED)), None);
     }
 
     // ── Row 2: Max width + Max height side by side ──

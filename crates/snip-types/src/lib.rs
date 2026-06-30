@@ -426,6 +426,15 @@ pub struct ResizeOptions {
     /// Maximum allowed height after downscaling.
     #[serde(default = "default_resize_max_height")]
     pub max_height: u32,
+
+    /// Whether to keep a full-size original copy when auto-resize crops the image.
+    ///
+    /// When `enabled` is true AND the capture exceeds the max limits, the saved
+    /// file and clipboard stay the reduced version, but an additional sibling file
+    /// with a `_full` suffix is also written containing the untouched original
+    /// capture at full resolution.
+    #[serde(default = "default_resize_keep_original")]
+    pub keep_original: bool,
 }
 
 impl Default for ResizeOptions {
@@ -434,6 +443,7 @@ impl Default for ResizeOptions {
             enabled: default_resize_enabled(),
             max_width: default_resize_max_width(),
             max_height: default_resize_max_height(),
+            keep_original: default_resize_keep_original(),
         }
     }
 }
@@ -572,6 +582,11 @@ fn default_resize_max_width() -> u32 {
 /// Default max height for auto-resize: 2048 pixels.
 fn default_resize_max_height() -> u32 {
     2048
+}
+
+/// Default keep_original for auto-resize: false (backward compatible).
+fn default_resize_keep_original() -> bool {
+    false
 }
 
 // ======================== GEOMETRY ========================

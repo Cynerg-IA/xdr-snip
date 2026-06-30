@@ -9,6 +9,8 @@ filename_pattern = "screenshot_{timestamp}"
 enabled = false
 max_width = 2048
 max_height = 2048
+keep_original = false
+keep_original = false
 
 [capture.format_options.jpeg]
 quality = 85

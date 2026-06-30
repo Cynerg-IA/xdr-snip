@@ -205,7 +205,7 @@ fn handle_capture(cfg: &snip_types::Config, save_dir: &PathBuf) {
         }
     };
 
-    let region = selection.region;
+    let mut region = selection.region;
     info!(
         "handle_capture: region={}, monitor={}, hmonitor=0x{:X}",
         region, selection.monitor, selection.hmonitor
@@ -213,7 +213,7 @@ fn handle_capture(cfg: &snip_types::Config, save_dir: &PathBuf) {
 
     // Step 3: Choose pixel source — HDR frame if available, else GDI fallback
     let hdr_frame = hdr_frames.get(&selection.hmonitor);
-    let pixels_rgb = if let Some(frame) = hdr_frame {
+    let mut pixels_rgb = if let Some(frame) = hdr_frame {
         info!(
             "handle_capture: using WinRT HDR pixels ({}x{}, hdr={})",
             frame.width, frame.height, frame.is_hdr
@@ -300,7 +300,7 @@ fn handle_capture(cfg: &snip_types::Config, save_dir: &PathBuf) {
 
         // Build an ImageBuffer from our RGB8 Vec, resize with Lanczos3, convert back.
         if let Some(img) = image::ImageBuffer::<image::Rgb<u8>, Vec<u8>>::from_raw(
-            region.w, region.h, pixels_rgb,
+            region.w, region.h, std::mem::take(&mut pixels_rgb),
         ) {
             let resized_img = image::imageops::resize(&img, resized_w, resized_h, image::imageops::FilterType::Lanczos3);
             pixels_rgb = resized_img.into_raw();

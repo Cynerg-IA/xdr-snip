@@ -59,10 +59,8 @@ pub fn load_config() -> Result<Config, SnipError> {
     // and remove deprecated formats (e.g. avif).
     let removed_format = handle_removed_format(&raw);
     let migrated = migrate_legacy_config(&raw);
-    let parse_str = removed_format
-        .or(migrated.clone())
-        .as_deref()
-        .unwrap_or(&raw);
+    let merged = removed_format.or(migrated.clone());
+    let parse_str = merged.as_deref().unwrap_or(&raw);
 
     let config: Config = toml::from_str(parse_str).map_err(|e| {
         SnipError::Config(format!(

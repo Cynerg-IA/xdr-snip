@@ -536,6 +536,7 @@ unsafe fn handle_save(hwnd: HWND) {
         })
         .unwrap_or(2560);
     let resize_height: u32 = GetDlgItem(Some(hwnd), ID_RESIZE_HEIGHT)
+        .ok()
         .and_then(|h| {
             let txt = get_text(h);
             txt.parse().ok()
@@ -728,7 +729,7 @@ unsafe fn create_controls(hwnd: HWND) {
 
     // ─── Section 5: Auto-resize ───
     create_resize_controls(
-        hwnd, hinstance, font, &opts, resize_cfg,
+        hwnd, hinstance, font, &opts, &resize_cfg,
     );
 
     // ─── Bottom row: Advanced checkbox (left) + Save/Cancel (right) ───

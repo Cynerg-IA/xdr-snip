@@ -377,7 +377,7 @@ fn handle_capture(cfg: &snip_types::Config, save_dir: &PathBuf) {
             let full_out = full_path.clone();
             let full_pixels = orig_pixels.clone();
             if let Err(e) = capture::encode_image(
-                &full_pixels, orig_w, orig_h, full_format, &full_options, &full_out, None,
+                &full_pixels, *orig_w, *orig_h, full_format, &full_options, &full_out, None,
             ) {
                 error!("handle_capture: full-size original encode failed: {}", e);
             }

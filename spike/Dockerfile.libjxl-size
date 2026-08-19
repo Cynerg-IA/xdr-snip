@@ -1,0 +1,33 @@
+# Phase 0 size spike for xdr-snip v0.6.0 (Gitea issue #7)
+#
+# PURPOSE: measure the REAL size cost of a TRIMMED, ENCODER-ONLY libjxl when
+# statically linked into a Windows PE — the number the Phase 0 gate actually
+# requires. Upstream's cjxl.exe (5,250,560 B) is a FAT build (decoder + CLI +
+# extras_codec IO + all Highway SIMD targets) and is only an UPPER BOUND.
+#
+# Cross-compiles with mingw-w64 (x86_64-w64-mingw32). This is NOT MSVC — sizes
+# are indicative, not byte-authoritative for the /MT MSVC build. Label them so.
+#
+# Build:  thalamus_image_build (docker.sock /build, no docker CLI)
+# Run:    thalamus_exec_job    (long compile, no 30s cap)
+
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential cmake ninja-build git ca-certificates curl \
+        mingw-w64 mingw-w64-tools \
+        pkg-config python3 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /work
+
+# Pin to the same release measured from upstream artifacts, so the trimmed
+# number is directly comparable to cjxl.exe = 5,250,560 B.
+ARG LIBJXL_TAG=v0.12.0
+RUN git clone --depth 1 --branch ${LIBJXL_TAG} --recursive \
+        https://github.com/libjxl/libjxl.git libjxl
+
+COPY spike/measure-libjxl.sh /work/measure-libjxl.sh
+RUN chmod +x /work/measure-libjxl.sh
+
+CMD ["/work/measure-libjxl.sh"]

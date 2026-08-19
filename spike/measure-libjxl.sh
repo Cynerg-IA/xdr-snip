@@ -7,11 +7,22 @@
 # Compare against:
 #   xdr-snip v0.5.0 exe   = 3,068,928 B   (the budget)
 #   upstream cjxl.exe     = 5,250,560 B   (FAT upper bound, all SIMD + CLI + decoder)
+#
+# RUN 1 FAILURES FIXED HERE:
+#  1. Link died on `undefined reference to __imp_Jxl*`. The __imp_ prefix is the
+#     MinGW marker for __declspec(dllimport): jxl_export.h assumes a DLL unless
+#     JXL_STATIC_DEFINE is defined. Static linking REQUIRES -DJXL_STATIC_DEFINE.
+#  2. ninja died at [188/196] enc_fast_lossless.cc.obj but only printed the
+#     generic "subcommand failed" summary because output was piped to `tail`.
+#     Now the build log is tee'd to a file and the real diagnostic is extracted.
+#  3. MEASURE_EXIT_CODE was reported as 0 despite failure ($? of the wrong
+#     pipeline stage). Now every stage's status is captured explicitly.
 set -uo pipefail
 
 BUDGET=3068928
 CJXL_FAT=5250560
 TC=/work/mingw-toolchain.cmake
+BUILD_LOG=/work/build.log
 
 cat > "$TC" <<'EOF'
 set(CMAKE_SYSTEM_NAME Windows)
@@ -53,10 +64,25 @@ cmake -S /work/libjxl -B /work/build -G Ninja \
   -DJPEGXL_ENABLE_HWY_AVX3_ZEN4=OFF \
   -DJPEGXL_ENABLE_HWY_SSSE3=OFF \
   -DJPEGXL_ENABLE_HWY_SSE2=OFF \
-  2>&1 | tail -25
+  > /work/configure.log 2>&1
+CONFIGURE_RC=$?
+tail -20 /work/configure.log
+echo "CONFIGURE_RC=$CONFIGURE_RC"
+[ $CONFIGURE_RC -ne 0 ] && { echo "CONFIGURE FAILED - aborting, no number to report"; exit 1; }
 
-echo "############ BUILD ############"
-cmake --build /work/build --parallel "$(nproc)" 2>&1 | tail -15
+echo "############ BUILD (full log -> $BUILD_LOG) ############"
+# -k 0 keeps going after a failure so we learn EVERY broken target, not just the first.
+cmake --build /work/build --parallel "$(nproc)" -- -k 0 > "$BUILD_LOG" 2>&1
+BUILD_RC=$?
+echo "BUILD_RC=$BUILD_RC"
+tail -12 "$BUILD_LOG"
+
+if [ $BUILD_RC -ne 0 ]; then
+  echo "---------- ACTUAL COMPILER DIAGNOSTICS (not ninja's generic summary) ----------"
+  grep -nE 'error:|Error [0-9]|FAILED:' "$BUILD_LOG" | head -40
+  echo "---------- context around first FAILED ----------"
+  awk '/^FAILED:/{found=NR} found && NR>=found && NR<=found+25' "$BUILD_LOG" | head -30
+fi
 
 echo "############ STATIC LIB SIZES (mingw .a) ############"
 find /work/build -name '*.a' -printf '%10s  %p\n' 2>/dev/null | sort -rn | head -20
@@ -92,12 +118,26 @@ int main(void) {
 }
 EOF
 
-LIBS=$(find /work/build -name '*.a' | tr '\n' ' ')
-INC="-I/work/libjxl/lib/include -I/work/build/lib/include"
-x86_64-w64-mingw32-gcc -Os -o /work/mini.exe /work/mini.c $INC $LIBS \
-    -lstdc++ -lpthread -static -static-libgcc -static-libstdc++ 2>&1 | tail -20
+# Link order matters for static archives: enc before dec before common deps.
+LIBS=""
+for want in libjxl_enc.a libjxl.a libjxl_dec.a libjxl_cms.a libhwy.a \
+            libbrotlienc.a libbrotlidec.a libbrotlicommon.a libjxl_threads.a; do
+    f=$(find /work/build -name "$want" | head -1)
+    [ -n "$f" ] && LIBS="$LIBS $f"
+done
+echo "LINKING AGAINST:$LIBS"
 
-if [ -f /work/mini.exe ]; then
+INC="-I/work/libjxl/lib/include -I/work/build/lib/include"
+# JXL_STATIC_DEFINE is REQUIRED: without it jxl_export.h emits __declspec(dllimport)
+# and every symbol resolves as __imp_Jxl* against a DLL that does not exist.
+x86_64-w64-mingw32-gcc -Os -DJXL_STATIC_DEFINE -o /work/mini.exe /work/mini.c \
+    $INC $LIBS -lstdc++ -lpthread -static -static-libgcc -static-libstdc++ \
+    > /work/link.log 2>&1
+LINK_RC=$?
+echo "LINK_RC=$LINK_RC"
+[ $LINK_RC -ne 0 ] && tail -25 /work/link.log
+
+if [ -f /work/mini.exe ] && [ $LINK_RC -eq 0 ]; then
   x86_64-w64-mingw32-strip /work/mini.exe
   SZ=$(stat -c%s /work/mini.exe)
   echo "=================== RESULT ==================="
@@ -113,6 +153,11 @@ head = budget - sz
 print(f"HEADROOM left for ALL of xdr-snip (Win32 UI, D3D11/WinRT capture, WIC, libwebp, QOI, static CRT): {head:,} B")
 print("VERDICT-INPUT: " + ("PLAUSIBLE - headroom remains" if head > 0 else "OVER BUDGET on libjxl alone"))
 PY
+  FINAL_RC=0
 else
-  echo "LINK FAILED - report the error above verbatim, do NOT fabricate a number"
+  echo "LINK FAILED or mini.exe missing - report errors verbatim, do NOT fabricate a number"
+  FINAL_RC=1
 fi
+
+echo "MEASURE_EXIT_CODE=$FINAL_RC"
+exit $FINAL_RC

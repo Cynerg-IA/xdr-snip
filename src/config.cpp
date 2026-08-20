@@ -470,7 +470,7 @@ std::string serializeConfig(const Config& config) {
 Config parseConfig(const std::string& tomlText) {
     toml::table root;
     try {
-        root = toml::parse(tomlText);
+        root = toml::parse(dedupeLastWins(tomlText));
     } catch (const toml::parse_error& e) {
         throw ConfigError(std::string("failed to parse config TOML: ") +
                            e.description().data());
@@ -486,7 +486,7 @@ Config parseConfig(const std::string& tomlText) {
 std::optional<std::string> migrateLegacyConfig(const std::string& tomlText) {
     toml::table root;
     try {
-        root = toml::parse(tomlText);
+        root = toml::parse(dedupeLastWins(tomlText));
     } catch (const toml::parse_error&) {
         return std::nullopt;
     }

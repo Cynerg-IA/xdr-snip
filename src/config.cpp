@@ -10,6 +10,9 @@
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <string>
+#include <utility>
+#include <vector>
 
 namespace snip {
 
@@ -17,6 +20,48 @@ namespace {
 
 constexpr const char* kAppDirName = "xdr-snip";
 constexpr const char* kConfigFileName = "config.toml";
+
+// toml++ rejects duplicate keys (TOML-spec correct), but Rust's toml crate
+// tolerates them with last-wins. v0.5.x shipped a config.toml with a
+// duplicated `keep_original`, so every existing user install would abort on
+// upgrade. Pre-pass the text to keep only the LAST definition of each
+// (section, key) so those configs still load.
+std::string dedupeLastWins(const std::string& in) {
+    std::istringstream is(in);
+    std::string line;
+    std::vector<std::string> out;
+    std::string section;
+    std::vector<std::pair<std::string, size_t>> seen;
+    while (std::getline(is, line)) {
+        std::string trimmed = line;
+        size_t b = trimmed.find_first_not_of(" \t");
+        if (b == std::string::npos || trimmed[b] == '#') { out.push_back(line); continue; }
+        if (trimmed[b] == '[') { section = trimmed.substr(b); out.push_back(line); continue; }
+        size_t eq = std::string::npos;
+        bool inS = false, inD = false;
+        for (size_t i = b; i < trimmed.size(); ++i) {
+            char c = trimmed[i];
+            if (c == '\'' && !inD) inS = !inS;
+            else if (c == '"' && !inS) inD = !inD;
+            else if (c == '=' && !inS && !inD) { eq = i; break; }
+        }
+        if (eq == std::string::npos) { out.push_back(line); continue; }
+        std::string key = trimmed.substr(b, eq - b);
+        size_t ke = key.find_last_not_of(" \t");
+        if (ke != std::string::npos) key = key.substr(0, ke + 1);
+        std::string full = section + "|" + key;
+        bool dup = false;
+        for (auto& p : seen) {
+            if (p.first == full) { out[p.second] = line; dup = true; break; }
+        }
+        if (dup) continue;
+        seen.push_back({full, out.size()});
+        out.push_back(line);
+    }
+    std::string r;
+    for (auto& l : out) { r += l; r += '\n'; }
+    return r;
+}
 
 // [xdr-snip] warning prefix -- documented substitute for Rust's
 // tracing::warn!() macro. No logging framework is pulled in for this phase;

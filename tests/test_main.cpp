@@ -12,7 +12,9 @@
 // guidance.
 
 #include <cstdio>
+#include <fstream>
 #include <functional>
+#include <sstream>
 #include <string>
 #include <vector>
 

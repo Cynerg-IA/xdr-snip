@@ -242,6 +242,40 @@ bool test_resize_defaults_required_check() {
     return true;
 }
 
+// ======================== v0.6.0 phase-1 config-fix tests (issue #8/#9) ========================
+
+bool test_duplicate_key_last_wins() {
+    // toml++ rejects duplicate keys outright; v0.5.x shipped configs with a
+    // duplicated keep_original, so we pre-dedupe with last-wins semantics
+    // (matching Rust's toml crate) before handing text to toml::parse.
+    // Assert the VALUE, not just no-throw -- a no-throw-only test would
+    // still pass under an (incorrect) first-wins implementation.
+    const std::string dup = "[capture.resize]\nenabled = false\nkeep_original = false\nkeep_original = true\n";
+    snip::Config cfg = snip::parseConfig(dup);  // must not throw
+    CHECK(cfg.capture.resize.keepOriginal == true);
+    return true;
+}
+
+bool test_real_repo_config_toml_parses() {
+    // The repo's actual shipped config.toml must parse without throwing --
+    // guards against regressions in the deduped file or the parser itself.
+    std::ifstream in("config.toml", std::ios::binary);
+    CHECK(static_cast<bool>(in));
+    std::ostringstream buf;
+    buf << in.rdbuf();
+    snip::Config cfg = snip::parseConfig(buf.str());  // must not throw
+    (void)cfg;
+    return true;
+}
+
+bool test_jxl_quality_is_85_equivalent() {
+    // Default JXL distance must be 1.45, the libjxl JPEG-quality-85
+    // equivalent per issue #8 (d = 0.1 + (100-q)*0.09).
+    snip::JxlOptions opts;
+    CHECK(opts.quality == 1.45f);
+    return true;
+}
+
 // ======================== config.h tests (port of snip-app config.rs tests) ========================
 
 bool test_expand_tilde_no_tilde() {

@@ -160,17 +160,16 @@ struct ExrOptions {
 // JXL-specific encoding options. NEW in C++ -- no Rust precedent since JXL
 // did not exist as a format in v0.5.0. Defaults chosen deliberately (flagged
 // for review per issue #8):
-//   - quality = 1.0f: this is a libjxl "distance" value (butteraugli-ish
+//   - quality = 1.45f: this is a libjxl "distance" value (butteraugli-ish
 //     perceptual distance), NOT a 0-100 quality percentage. Distance is
-//     inverted vs quality: 0.0 = mathematically lossless, ~1.0 is the
-//     libjxl-documented "visually lossless" sweet spot broadly recognized
-//     as comparable to a high JPEG quality (~90-ish equivalent), and it is
-//     libjxl's own default distance when none is specified via the CLI
-//     (cjxl). The issue spec asked for "~85-equivalent"; 1.0 distance is
-//     the closest well-documented, libjxl-native anchor point rather than
-//     an invented number, and errs slightly higher quality than 85 to be
-//     a safe, uncontroversial default for a screenshot tool where text
-//     legibility matters.
+//     inverted vs quality: 0.0 = mathematically lossless. Per issue #8, the
+//     spec asks for a JPEG-quality-85 equivalent; libjxl's own documented
+//     JPEG-quality-to-distance conversion is
+//         d = 0.1 + (100 - q) * 0.09
+//     which for q=85 gives d = 0.1 + 15*0.09 = 1.45. That is the anchor for
+//     this default -- not an invented number, and not the earlier 1.0
+//     "visually lossless" guess -- so it matches the issue's explicit
+//     ~85-equivalent target precisely.
 //   - effort = 7: libjxl's own default encoder effort (1=fastest/worst,
 //     9=slowest/best; 7 is documented as the cjxl default "squirrel"
 //     preset), a reasonable speed/size tradeoff for interactive screenshot

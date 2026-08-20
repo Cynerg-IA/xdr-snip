@@ -375,6 +375,9 @@ int main() {
         {"migrate_legacy_config_detects_bare_quality",
          test_migrate_legacy_config_detects_bare_quality},
         {"migrate_legacy_config_skips_new_format", test_migrate_legacy_config_skips_new_format},
+        {"duplicate_key_last_wins", test_duplicate_key_last_wins},
+        {"real_repo_config_toml_parses", test_real_repo_config_toml_parses},
+        {"jxl_quality_is_85_equivalent", test_jxl_quality_is_85_equivalent},
     };
 
     int passed = 0;

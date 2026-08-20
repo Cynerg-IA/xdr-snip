@@ -178,7 +178,7 @@ struct ExrOptions {
 //     match the lossy-by-default behavior of every other format in this
 //     codebase (Jpeg, WebP all default lossless=false/quality-based).
 struct JxlOptions {
-    float quality = 1.0f;  // libjxl "distance"; see comment above.
+    float quality = 1.45f;  // libjxl "distance"; see comment above.
     int effort = 7;
     bool lossless = false;
 };

@@ -157,3 +157,33 @@ else()
     "skipping the JXL encoder target (snip_encode_jxl) and its tests. "
     "Set -DLIBJXL_SOURCE_DIR=/path/to/libjxl to enable Phase 2.")
 endif()
+
+# ---------------------------------------------------------------------------
+# Phase 3a (issue #7, portable-subset tranche): capture.rs port (tone
+# mapping, resize, encode dispatch) + the tray/hotkey/clipboard platform
+# seams. Depends on snip_encode_jxl (capture.cpp's JXL dispatch path calls
+# encodeJxl() directly) -- only built when the libjxl target above was
+# configured successfully, same guard as snip_encode_jxl itself.
+# ---------------------------------------------------------------------------
+if(TARGET snip_encode_jxl)
+  add_library(snip_capture STATIC
+    src/capture.cpp
+    src/tray.cpp
+    src/hotkey.cpp
+    src/clipboard.cpp
+  )
+  target_include_directories(snip_capture PUBLIC src)
+  target_link_libraries(snip_capture PUBLIC snip_types snip_encode_jxl)
+
+  add_executable(snip_capture_tests
+    tests/test_capture.cpp
+  )
+  target_link_libraries(snip_capture_tests PRIVATE snip_capture)
+
+  add_test(NAME snip_capture_tests COMMAND snip_capture_tests)
+else()
+  message(WARNING
+    "snip_encode_jxl target not configured -- skipping snip_capture "
+    "(Phase 3a) and its tests, since capture.cpp's JXL dispatch path "
+    "depends on it.")
+endif()
